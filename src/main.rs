@@ -3,6 +3,7 @@
 
 // parse CSV of notes/chords mapped to keyboard(||stradella bass system?)
 
+use std::alloc::System;
 use std::collections::HashMap;
 use std::{env, fs};
 use regex::Regex;
@@ -40,21 +41,21 @@ struct MidiNote {
     vel: u8,
 }
 
-struct CSVParser {
+struct CsvParser {
     regex: Regex,
 }
 
-impl CSVParser {
-    fn new() -> CSVParser {
-        CSVParser { 
-            regex: Regex::new("(?:(?:\"(.*?)\")|(.*?))(?:(?:,\\n)|,|\\n|$)").unwrap() 
+impl CsvParser {
+    fn new() -> CsvParser {
+        CsvParser {
+            regex: Regex::new(r#"(?:(?:"(.*?)")|(.*?))(?:(?:,\r?\n)|,|(?:\r?\n)|$)"#).unwrap(),
         }
     }
 
     fn cells_as_vec(&self, s: &str) -> Vec<String>{
         let mut out: Vec<String> = Vec::new();
         for caps in self.regex.captures_iter(s) {
-            for group in caps.iter() {
+            for group in caps.iter().skip(1) {
                 if let Some(m) = group {
                     out.push(m.as_str().to_owned());
                 }
@@ -65,12 +66,13 @@ impl CSVParser {
 }
 
 fn main() {
-    let csv_parser = CSVParser::new();
+    let csv_parser = CsvParser::new();
     let args: Vec<String> = env::args().collect(); // TODO error if file does not end with .csv
-    let file_path = args.first().expect("Correct usage: "); //TODO add correct usage text
+    let file_path = args.get(1).expect("Correct usage: "); //TODO add correct usage text
     let csv_string = fs::read_to_string(file_path).expect("Failed to read file: ");
     
     let parsed_csv = csv_parser.cells_as_vec(csv_string.as_str());
+    println!("{:?}", parsed_csv);
 
     // TODO parse keycode alias map
     // let key_map: HashMap<KeyCode, MidiNote> = HashMap::new();
