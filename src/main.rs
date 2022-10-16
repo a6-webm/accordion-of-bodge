@@ -3,12 +3,11 @@
 
 // parse CSV of notes/chords mapped to keyboard(||stradella bass system?)
 
-use std::alloc::System;
 use std::collections::HashMap;
 use std::{env, fs};
 use regex::Regex;
 
-// TODO implement KeyCode
+type KeyCode = String;
 
 enum NoteLetter {
     C=0,
@@ -26,12 +25,59 @@ struct Note {
     accidental: i8,
 }
 
-impl Note {
-    fn to_midi(&self, vel: u8) -> MidiNote {
-        todo!("todo") // TODO todo (todo) [todo] {Middle C is C4}
+enum Chord {
+    Custom(Vec<Note>),
+    Maj {root: Note, over: Option<Note>},
+    Min {root: Note, over: Option<Note>},
+    Mm7 {root: Note, over: Option<Note>},
+    Dim {root: Note, over: Option<Note>},
+}
+
+impl Chord {
+    fn new(s: &str) -> Option<Chord> {
+        todo!()
     }
 
+    fn to_midi_chord(&self, vel: u8) -> Vec<MidiNote> {
+        todo!()
+    }
+}
+
+impl Note {
     fn new(s: &str) -> Option<Note> {
+        let note = match s.chars().next() {
+            Some('A') => NoteLetter::A,
+            Some('B') => NoteLetter::B,
+            Some('C') => NoteLetter::C,
+            Some('D') => NoteLetter::D,
+            Some('E') => NoteLetter::E,
+            Some('F') => NoteLetter::F,
+            Some('G') => NoteLetter::G,
+            _ => return None,
+        };
+        let mut accidental: u8 = 0;
+        let mut iter = s.chars().skip(1).peekable();
+        match iter.peek() {
+            Some('b') => {
+                while iter.peek().map(|o| *o) == Some('b') {
+                    accidental -= 1;
+                    iter.next();
+                }
+            },
+            Some('#') => {
+                while iter.peek().map(|o| *o) == Some('#') {
+                    accidental += 1;
+                    iter.next();
+                }
+            },
+            Some(_) => (),
+            None => return None
+        } // TODO redo this to give you an index of where the accidentals end, then parse a slice from then on to get octave ----------------------------
+        
+        todo!()
+    }
+    
+    fn to_midi(&self, vel: u8) -> MidiNote {
         todo!("todo") // TODO todo (todo) [todo] {Middle C is C4}
     }
 }
@@ -68,27 +114,51 @@ impl CsvParser {
 fn main() {
     let csv_parser = CsvParser::new();
     let args: Vec<String> = env::args().collect(); // TODO error if file does not end with .csv
-    let file_path = args.get(1).expect("Correct usage: "); //TODO add correct usage text
-    let csv_string = fs::read_to_string(file_path).expect("Failed to read file: ");
-    
-    let parsed_csv = csv_parser.cells_as_vec(csv_string.as_str());
-    println!("{:?}", parsed_csv);
 
-    // TODO parse keycode alias map
-    // let key_map: HashMap<KeyCode, MidiNote> = HashMap::new();
+    let keymap_fp = args.get(1).expect("Correct usage: "); //TODO add correct usage text
+    let key_aliases_fp = args.get(2).expect("Correct usage: "); //TODO allow ommission of 2nd parameter
 
-    for s in parsed_csv.iter() {
-        if let None = s.split_whitespace().next() { // Ignore strings of whitespace
+    let keymap_string = fs::read_to_string(keymap_fp).expect("Failed to read file: ");
+    let key_aliases_string = fs::read_to_string(key_aliases_fp).expect("Failed to read file: ");
+
+    let keymap_csv = csv_parser.cells_as_vec(keymap_string.as_str());
+    let keyaliases_csv = csv_parser.cells_as_vec(key_aliases_string.as_str());
+
+    let mut key_aliases: HashMap<String, KeyCode> = HashMap::new();
+    let mut key_map: HashMap<KeyCode, Vec<MidiNote>> = HashMap::new();
+
+    // Populate key_aliases
+    for s in keyaliases_csv.iter() {
+        if s.trim().is_empty() { // Ignore strings of whitespace
             continue;
         }
         let mut iter = s.splitn(2, '=');
-        let chord_str = iter.next().expect("Missing chord and key data in cell");
-        let key_str = iter.next().expect("Missing chord or key data in cell");
-        let chord: Vec<Note> = chord_str.split_whitespace().map(|n| Note::new(n).expect("Note could not be parsed")).collect();
-        // let key = 
+        let alias = iter.next().expect("Missing alias and key data in alias CSV file").trim();
+        let gp_key = iter.next().expect("Missing alias or key data in alias CSV file").trim();
+        key_aliases.insert(alias.to_owned(), gp_key.to_owned());
     }
 
-    // parse CSV into a HashMap<KeyCode, MidiNote>
-    
+    // Populate key_map
+    for s in keymap_csv.iter() {
+        if s.trim().is_empty() { // Ignore strings of whitespace
+            continue;
+        }
+        let mut iter = s.splitn(3, |c| c == '=' || c == '.');
+        let chord_str = iter.next().expect("Wrong syntax in keymap CSV file").trim();
+        let alias = iter.next().expect("Wrong syntax in keymap CSV file").trim();
+        let vel: u8 = iter.next().expect("Wrong syntax in keymap CSV file").trim()
+            .parse().expect("Wrong syntax in keymap CSV file");
+        
+        let chord = Chord::new(chord_str).expect("Wrong syntax in keymap CSV file")
+            .to_midi_chord(vel);
+        let key = match key_aliases.get(alias) {
+            Some(s) => s,
+            None => {
+                println!("\"{}\" not in aliases.csv. Using alias, but it may not be a valid GlovePIE key", alias);
+                alias
+            },
+        };
+        key_map.insert(key.to_owned(), chord);
+    }
 
 }
