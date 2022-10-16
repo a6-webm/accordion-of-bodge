@@ -35,7 +35,39 @@ enum Chord {
 
 impl Chord {
     fn new(s: &str) -> Option<Chord> {
-        todo!()
+        let notes: Vec<&str> = s.split_whitespace().collect();
+        if notes.len() == 0 {
+            return None;
+        } else if notes.len() == 1 {
+            if s.chars().last() == Some('/') {
+                return None;
+            }
+            let (chord, over) = {
+                let mut iter = s.splitn(2, '/');
+                // TODO left off here, should learn how to write custom errors instead of expecting and Option, which means learning traits lol
+                // https://stackoverflow.com/questions/42584368/how-do-you-define-custom-error-types-in-rust
+                (iter.next().expect("Chord incorrectly formatted"), iter.next())
+            };
+
+            let over = match over {
+                Some(s) => Some(Note::new(s).expect(msg)),
+                None => None,
+            };
+
+            if chord.chars().last() == Some('M') {
+                return Some(Chord::Maj { 
+                    root: Note::new(&chord[..chord.len()-1]).expect("Note incorrectly formatted"), 
+                    over
+                });
+            }
+
+            return None;
+        } else {
+            return Some(Chord::Custom(
+                notes.iter().map(|n|
+                    Note::new(n).expect("Note incorrectly formatted")
+            ).collect()));
+        }
     }
 
     fn to_midi_chord(&self, vel: u8) -> Vec<MidiNote> {
