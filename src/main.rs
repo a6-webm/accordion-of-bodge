@@ -44,7 +44,7 @@ impl Chord {
 }
 
 impl Note {
-    fn new(s: &str) -> Option<Note> {
+    fn new(s: &str) -> Option<Note> { // TODO does this need to be -> Result<> for better error reporting to the user
         let note = match s.chars().next() {
             Some('A') => NoteLetter::A,
             Some('B') => NoteLetter::B,
@@ -55,26 +55,31 @@ impl Note {
             Some('G') => NoteLetter::G,
             _ => return None,
         };
-        let mut accidental: u8 = 0;
+        let mut accidental: i8 = 0;
         let mut iter = s.chars().skip(1).peekable();
-        match iter.peek() {
+        iter = match iter.peek() {
             Some('b') => {
                 while iter.peek().map(|o| *o) == Some('b') {
                     accidental -= 1;
                     iter.next();
                 }
+                iter
             },
             Some('#') => {
                 while iter.peek().map(|o| *o) == Some('#') {
                     accidental += 1;
                     iter.next();
                 }
+                iter
             },
-            Some(_) => (),
+            Some(_) => iter,
             None => return None
-        } // TODO redo this to give you an index of where the accidentals end, then parse a slice from then on to get octave ----------------------------
-        
-        todo!()
+        };
+        let octave:u8 = match iter.collect::<String>().parse() {
+            Ok(o) => o,
+            Err(_) => return None,
+        };
+        return Some(Note {octave, note, accidental});
     }
     
     fn to_midi(&self, vel: u8) -> MidiNote {
