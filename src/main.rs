@@ -20,7 +20,7 @@ enum NoteLetter {
 }
 
 struct Note {
-    octave: u8,
+    octave: i8,
     note: NoteLetter,
     accidental: i8,
 }
@@ -75,15 +75,22 @@ impl Note {
             Some(_) => iter,
             None => return None
         };
-        let octave:u8 = match iter.collect::<String>().parse() {
+        let octave:i8 = match iter.collect::<String>().parse() {
             Ok(o) => o,
             Err(_) => return None,
         };
         return Some(Note {octave, note, accidental});
     }
     
-    fn to_midi(&self, vel: u8) -> MidiNote {
-        todo!("todo") // TODO todo (todo) [todo] {Middle C is C4}
+    fn to_midi(&self, vel: u8) -> Option<MidiNote> {
+        if vel > 127 {return None;}
+        let pitch = (self.octave + 1) * 12 + (self.note as i8) + self.accidental;
+        let n: u8 = if pitch >= 0 {
+            pitch as u8
+        } else {
+            return None;
+        };
+        return Some(MidiNote { n, vel: vel });
     }
 }
 
