@@ -4,10 +4,42 @@
 // parse CSV of notes/chords mapped to keyboard(||stradella bass system?)
 
 use std::collections::HashMap;
+use std::fmt::{Display, self};
+use std::num::ParseIntError;
 use std::{env, fs};
 use regex::Regex;
 
 type KeyCode = String;
+
+#[derive(Debug, Clone)]
+enum ChordError {
+    EmptyStr,
+    InvNote(NoteError),
+    
+}
+
+#[derive(Debug, Clone)]
+enum NoteError {
+    EmptyStr,
+    InvNoteLetter(char),
+    MissingOctave,
+    InvOctave(ParseIntError),
+    InvMidiVel(u8),
+    InvMidiNote(),
+}
+
+impl Display for NoteError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            NoteError::EmptyStr => write!(f, "could not create Note from empty string"),
+            NoteError::InvNoteLetter(c) => write!(f, "could not create Note, invalid NoteLetter of '{}'", c),
+            NoteError::MissingOctave => write!(f, "could not create Note, missing Octave value"),
+            NoteError::InvOctave(ParseIntError) => write!(f, "could not create Note, invalid Octave, {}", ParseIntError),
+            NoteError::InvMidiVel(v) => write!(f, "could not create MidiNote from Note, vel > 127"),
+            NoteError::InvMidiNote() => write!(f, "could not create MidiNote from Note, note value < 0 or > 127"),
+        }
+    }
+}
 
 enum NoteLetter {
     C=0,
@@ -76,8 +108,9 @@ impl Chord {
 }
 
 impl Note {
-    fn new(s: &str) -> Option<Note> { // TODO does this need to be -> Result<> for better error reporting to the user
-        let note = match s.chars().next() {
+    fn new(s: &str) -> Result<Note, NoteError> { // TODO does this need to be -> Result<> for better error reporting to the user
+        let mut s_iter = s.chars().peekable();
+        let note = match s_iter.next() {
             Some('A') => NoteLetter::A,
             Some('B') => NoteLetter::B,
             Some('C') => NoteLetter::C,
@@ -85,44 +118,44 @@ impl Note {
             Some('E') => NoteLetter::E,
             Some('F') => NoteLetter::F,
             Some('G') => NoteLetter::G,
-            _ => return None,
+            Some(c) => return Err(NoteError::InvNoteLetter(c)),
+            None => return Err(NoteError::EmptyStr),
         };
         let mut accidental: i8 = 0;
-        let mut iter = s.chars().skip(1).peekable();
-        iter = match iter.peek() {
+        s_iter = match s_iter.peek() {
             Some('b') => {
-                while iter.peek().map(|o| *o) == Some('b') {
+                while s_iter.peek().map(|o| *o) == Some('b') {
                     accidental -= 1;
-                    iter.next();
+                    s_iter.next();
                 }
-                iter
+                s_iter
             },
             Some('#') => {
-                while iter.peek().map(|o| *o) == Some('#') {
+                while s_iter.peek().map(|o| *o) == Some('#') {
                     accidental += 1;
-                    iter.next();
+                    s_iter.next();
                 }
-                iter
+                s_iter
             },
-            Some(_) => iter,
-            None => return None
+            Some(_) => s_iter,
+            None => return Err(NoteError::MissingOctave),
         };
-        let octave:i8 = match iter.collect::<String>().parse() {
+        let octave:i8 = match s_iter.collect::<String>().parse() {
             Ok(o) => o,
-            Err(_) => return None,
+            Err(e) => return Err(NoteError::InvOctave(e)),
         };
-        return Some(Note {octave, note, accidental});
+        return Ok(Note {octave, note, accidental});
     }
     
-    fn to_midi(&self, vel: u8) -> Option<MidiNote> {
-        if vel > 127 {return None;}
+    fn to_midi(&self, vel: u8) -> Result<MidiNote, NoteError> {
+        if vel > 127 {return Err(NoteError::InvMidiVel(vel));}
         let pitch = (self.octave + 1) * 12 + (self.note as i8) + self.accidental;
         let n: u8 = if pitch >= 0 {
             pitch as u8
         } else {
-            return None;
+            return Err(NoteError::InvMidiNote());
         };
-        return Some(MidiNote { n, vel: vel });
+        return Ok(MidiNote { n, vel: vel });
     }
 }
 
