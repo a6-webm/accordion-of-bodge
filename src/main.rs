@@ -15,7 +15,8 @@ type KeyCode = String;
 enum ChordError {
     EmptyStr,
     InvNote(NoteError),
-    
+    MissingNotes,
+    MissingOver,
 }
 
 #[derive(Debug, Clone)]
@@ -31,7 +32,7 @@ enum NoteError {
 impl Display for NoteError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            NoteError::EmptyStr => write!(f, "could not create Note from empty string"),
+            NoteError::EmptyStr => write!(f, "could not create Note from empty string or whitespace"),
             NoteError::InvNoteLetter(c) => write!(f, "could not create Note, invalid NoteLetter of '{}'", c),
             NoteError::MissingOctave => write!(f, "could not create Note, missing Octave value"),
             NoteError::InvOctave(ParseIntError) => write!(f, "could not create Note, invalid Octave, {}", ParseIntError),
@@ -66,36 +67,39 @@ enum Chord {
 }
 
 impl Chord {
-    fn new(s: &str) -> Option<Chord> {
+    fn new(s: &str) -> Result<Chord, ChordError> {
         let notes: Vec<&str> = s.split_whitespace().collect();
         if notes.len() == 0 {
-            return None;
+            return Err(ChordError::EmptyStr);
         } else if notes.len() == 1 {
-            if s.chars().last() == Some('/') {
-                return None;
-            }
             let (chord, over) = {
+                let hasOver = s.find('/') != None;
                 let mut iter = s.splitn(2, '/');
-                // TODO left off here, should learn how to write custom errors instead of expecting and Option, which means learning traits lol
-                // https://stackoverflow.com/questions/42584368/how-do-you-define-custom-error-types-in-rust
-                (iter.next().expect("Chord incorrectly formatted"), iter.next())
-            };
-
-            let over = match over {
-                Some(s) => Some(Note::new(s).expect(msg)),
-                None => None,
-            };
+                let chord = match iter.next() {
+                    Some(ch) => ch,
+                    None => return Err(ChordError::MissingNotes),
+                };
+                let over = match (iter.next(), hasOver) {
+                    (Some(s), true) => match Note::new(s) {
+                        Ok(n) => Some(n),
+                        Err(e) => return Err(ChordError::InvNote(e)),
+                    },
+                    (_, false) => None,
+                    (None, true) => return Err(ChordError::MissingOver),
+                };
+                (chord, over)
+            };  
 
             if chord.chars().last() == Some('M') {
-                return Some(Chord::Maj { 
+                return Ok(Chord::Maj { 
                     root: Note::new(&chord[..chord.len()-1]).expect("Note incorrectly formatted"), 
                     over
                 });
             }
 
-            return None;
+            todo!()
         } else {
-            return Some(Chord::Custom(
+            return Ok(Chord::Custom(
                 notes.iter().map(|n|
                     Note::new(n).expect("Note incorrectly formatted")
             ).collect()));
