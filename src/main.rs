@@ -75,7 +75,7 @@ fn main() {
             .parse().expect("Wrong syntax in keymap CSV file");
         
         let chord = Chord::new(chord_str).expect("Wrong syntax in keymap CSV file")
-            .to_midi_chord(vel);
+            .to_midi_chord(vel).expect("Error creating chord");
         let key = match key_aliases.get(alias) {
             Some(s) => s,
             None => {
