@@ -17,6 +17,7 @@ enum ChordError {
     InvNote(NoteError),
     MissingNotes,
     MissingOver,
+    InvChordType(char),
 }
 
 #[derive(Debug, Clone)]
@@ -68,41 +69,41 @@ enum Chord {
 
 impl Chord {
     fn new(s: &str) -> Result<Chord, ChordError> {
-        let notes: Vec<&str> = s.split_whitespace().collect();
-        if notes.len() == 0 {
+        let notes_str: Vec<&str> = s.split_whitespace().collect();
+        if notes_str.len() == 0 {
             return Err(ChordError::EmptyStr);
-        } else if notes.len() == 1 {
+        } else if notes_str.len() == 1 {
             let (chord, over) = {
-                let hasOver = s.find('/') != None;
+                let has_over = s.find('/') != None;
                 let mut iter = s.splitn(2, '/');
-                let chord = match iter.next() {
-                    Some(ch) => ch,
-                    None => return Err(ChordError::MissingNotes),
-                };
-                let over = match (iter.next(), hasOver) {
-                    (Some(s), true) => match Note::new(s) {
-                        Ok(n) => Some(n),
-                        Err(e) => return Err(ChordError::InvNote(e)),
-                    },
+                let chord = match iter.next() { Some(ch) => ch, None => return Err(ChordError::MissingNotes), };
+                let over = match (iter.next(), has_over) {
+                    (Some(s), true) => match Note::new(s) { Ok(n) => Some(n), Err(e) => return Err(ChordError::InvNote(e)), },
                     (_, false) => None,
                     (None, true) => return Err(ChordError::MissingOver),
                 };
                 (chord, over)
-            };  
+            };
 
-            if chord.chars().last() == Some('M') {
-                return Ok(Chord::Maj { 
-                    root: Note::new(&chord[..chord.len()-1]).expect("Note incorrectly formatted"), 
-                    over
-                });
+            let root = match Note::new(&chord[..chord.len()-1]) { Ok(n) => n, Err(e) => return Err(ChordError::InvNote(e)), };
+
+            match chord.chars().last() {
+                Some('M') => return Ok(Chord::Maj {root, over}),
+                Some('m') => return Ok(Chord::Min {root, over}),
+                Some('7') => return Ok(Chord::Mm7 {root, over}),
+                Some('o') => return Ok(Chord::Dim {root, over}),
+                Some(c) => return Err(ChordError::InvChordType(c)),
+                None => unreachable!(),
             }
-
-            todo!()
         } else {
-            return Ok(Chord::Custom(
-                notes.iter().map(|n|
-                    Note::new(n).expect("Note incorrectly formatted")
-            ).collect()));
+            let mut notes: Vec<Note> = Vec::new();
+            for s in notes_str.iter() {
+                match Note::new(s) {
+                    Ok(n) => {notes.push(n)},
+                    Err(e) => return Err(ChordError::InvNote(e)),
+                }
+            }
+            return Ok(Chord::Custom(notes));
         }
     }
 
