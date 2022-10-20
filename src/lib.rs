@@ -23,14 +23,20 @@ pub enum NoteError {
     InvMidiNote(),
 }
 
+impl From<NoteError> for ChordError {
+    fn from(e: NoteError) -> Self {
+        return ChordError::InvNote(e);
+    }
+}
+
 impl Display for NoteError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             NoteError::EmptyStr => write!(f, "could not create Note from empty string or whitespace"),
             NoteError::InvNoteLetter(c) => write!(f, "could not create Note, invalid NoteLetter of '{}'", c),
             NoteError::MissingOctave => write!(f, "could not create Note, missing Octave value"),
-            NoteError::InvOctave(ParseIntError) => write!(f, "could not create Note, invalid Octave, {}", ParseIntError),
-            NoteError::InvMidiVel(v) => write!(f, "could not create MidiNote from Note, vel > 127"),
+            NoteError::InvOctave(parse_int_error) => write!(f, "could not create Note, invalid Octave, {}", parse_int_error),
+            NoteError::InvMidiVel(v) => write!(f, "could not create MidiNote from Note, vel:{} > 127", v),
             NoteError::InvMidiNote() => write!(f, "could not create MidiNote from Note, note value < 0 or > 127"),
         }
     }
@@ -63,7 +69,7 @@ pub enum Chord {
 }
 
 impl Chord {
-    pub fn new(s: &str) -> Result<Chord, ChordError> {
+    pub fn new(s: &str) -> Result<Self, ChordError> {
         let notes_str: Vec<&str> = s.split_whitespace().collect();
         if notes_str.len() == 0 {
             return Err(ChordError::EmptyStr);
@@ -73,17 +79,17 @@ impl Chord {
                 let mut iter = s.splitn(2, '/');
                 let chord = match iter.next() { Some(ch) => ch, None => return Err(ChordError::MissingNotes), };
                 let over = match (iter.next(), has_over) {
-                    (Some(s), true) => match Note::new(s) { Ok(n) => Some(n), Err(e) => return Err(ChordError::InvNote(e)), },
+                    (Some(s), true) => Some(Note::new(s)?),
                     (_, false) => None,
                     (None, true) => return Err(ChordError::MissingOver),
                 };
                 (chord, over)
             };
 
-            let root = match Note::new(&chord[..chord.len()-1]) { Ok(n) => n, Err(e) => return Err(ChordError::InvNote(e)), };
+            let root = Note::new(&chord[..chord.len()-1])?;
             
             if let Some(over) = &over {
-                if over.to_pitch() > root.to_pitch() {
+                if over.pitch() > root.pitch() {
                     return Err(ChordError::InvRoot { root: root.to_owned(), over: over.to_owned() });
                 }
             }
@@ -99,22 +105,68 @@ impl Chord {
         } else {
             let mut notes: Vec<Note> = Vec::new();
             for s in notes_str.iter() {
-                match Note::new(s) {
-                    Ok(n) => {notes.push(n)},
-                    Err(e) => return Err(ChordError::InvNote(e)),
-                }
+                notes.push(Note::new(s)?);
             }
             return Ok(Chord::Custom(notes));
         }
     }
 
-    pub fn to_midi_chord(&self, vel: u8) -> Vec<MidiNote> {
-        todo!()
+    pub fn to_midi_chord(&self, vel: u8) -> Result<Vec<MidiNote>, ChordError> {
+        let mut intervals: Vec<u8> = Vec::new();
+        let mut out: Vec<MidiNote> = Vec::new();
+        let ro;
+        let ov;
+
+        match self {
+            Chord::Custom(v) => {
+                for n in v {
+                    out.push(n.to_midi(vel)?);
+                }
+                return Ok(out);
+            },
+            Chord::Maj { root, over } => {
+                intervals.push(4);
+                intervals.push(7);
+                ro = root;
+                ov = over;
+            },
+            Chord::Min { root, over } => {
+                intervals.push(3);
+                intervals.push(7);
+                ro = root;
+                ov = over;
+            },
+            Chord::Mm7 { root, over } => {
+                intervals.push(4);
+                intervals.push(7);
+                intervals.push(10);
+                ro = root;
+                ov = over;
+            },
+            Chord::Dim { root, over } => {
+                intervals.push(3);
+                intervals.push(6);
+                ro = root;
+                ov = over;
+            },
+        }
+
+        if let Some(over) = ov {
+            out.push(over.to_midi(vel)?);
+        }
+        let root = ro.to_midi(vel)?;
+        out.push(root.to_owned());
+
+        for inte in intervals {
+            out.push(MidiNote::new(root.n as i32 + inte as i32, vel)?);
+        }
+
+        return Ok(out);
     }
 }
 
 impl Note {
-    pub fn new(s: &str) -> Result<Note, NoteError> {
+    pub fn new(s: &str) -> Result<Self, NoteError> {
         let mut s_iter = s.chars().peekable();
         let note = match s_iter.next() {
             Some('A') => NoteLetter::A,
@@ -153,13 +205,24 @@ impl Note {
         return Ok(Note {octave, note, accidental});
     }
 
-    fn to_pitch(&self) -> i32 {
+    fn pitch(&self) -> i32 {
         return (self.octave as i32 + 1) * 12 + self.note as i32 + self.accidental as i32;
     }
     
     pub fn to_midi(&self, vel: u8) -> Result<MidiNote, NoteError> {
+        return MidiNote::new(self.pitch(), vel);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MidiNote {
+    n: u8,
+    vel: u8,
+}
+
+impl MidiNote {
+    pub fn new(pitch: i32, vel:u8) -> Result<Self, NoteError> {
         if vel > 127 {return Err(NoteError::InvMidiVel(vel));}
-        let pitch = self.to_pitch();
         let n: u8 = {if pitch >= 0 {
             pitch as u8
         } else {
@@ -167,9 +230,4 @@ impl Note {
         }};
         return Ok(MidiNote { n, vel: vel });
     }
-}
-
-pub struct MidiNote {
-    n: u8,
-    vel: u8,
 }
