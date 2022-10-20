@@ -10,6 +10,7 @@ pub enum ChordError {
     MissingNotes,
     MissingOver,
     InvChordType(char),
+    InvRoot {root: Note, over: Note},
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +36,7 @@ impl Display for NoteError {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum NoteLetter {
     C=0,
     D=2,
@@ -45,6 +47,7 @@ pub enum NoteLetter {
     B=11,
 }
 
+#[derive(Debug, Clone)]
 pub struct Note {
     octave: i8,
     note: NoteLetter,
@@ -78,7 +81,13 @@ impl Chord {
             };
 
             let root = match Note::new(&chord[..chord.len()-1]) { Ok(n) => n, Err(e) => return Err(ChordError::InvNote(e)), };
-
+            
+            if let Some(over) = &over {
+                if over.to_pitch() > root.to_pitch() {
+                    return Err(ChordError::InvRoot { root: root.to_owned(), over: over.to_owned() });
+                }
+            }
+            
             match chord.chars().last() {
                 Some('M') => return Ok(Chord::Maj {root, over}),
                 Some('m') => return Ok(Chord::Min {root, over}),
@@ -143,15 +152,19 @@ impl Note {
         };
         return Ok(Note {octave, note, accidental});
     }
+
+    fn to_pitch(&self) -> i32 {
+        return (self.octave as i32 + 1) * 12 + self.note as i32 + self.accidental as i32;
+    }
     
     pub fn to_midi(&self, vel: u8) -> Result<MidiNote, NoteError> {
         if vel > 127 {return Err(NoteError::InvMidiVel(vel));}
-        let pitch = (self.octave + 1) * 12 + (self.note as i8) + self.accidental;
-        let n: u8 = if pitch >= 0 {
+        let pitch = self.to_pitch();
+        let n: u8 = {if pitch >= 0 {
             pitch as u8
         } else {
             return Err(NoteError::InvMidiNote());
-        };
+        }};
         return Ok(MidiNote { n, vel: vel });
     }
 }
