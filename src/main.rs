@@ -4,8 +4,17 @@
 // parse CSV of notes/chords mapped to keyboard(||stradella bass system?)
 
 use std::collections::HashMap;
+use std::ffi::c_uint;
+use std::mem::size_of;
 use std::{env, fs};
 use regex::Regex;
+use winapi::shared::basetsd::PUINT32;
+use winapi::shared::minwindef::UINT;
+use winapi::shared::ntdef::NULL;
+use winapi::shared::winerror::ERROR_INSUFFICIENT_BUFFER;
+use winapi::um::errhandlingapi::GetLastError;
+use winapi::um::winuser::{GetRawInputDeviceList, PRAWINPUTDEVICELIST, RAWINPUTDEVICE, RAWINPUTDEVICELIST};
+use winapi::vc::limits::UINT_MAX;
 use crate::lib::{Chord, KeyCode, MidiNote};
 
 mod lib;
@@ -85,5 +94,46 @@ fn main() {
     }
 
     println!("key_map: {:?}", key_map);
+
+    let mut rid_list: Vec<RAWINPUTDEVICELIST>;
+    loop {
+        let mut num_dev: UINT = 0;
+        unsafe {
+            let err = GetRawInputDeviceList(NULL as PRAWINPUTDEVICELIST, &mut num_dev, size_of::<RAWINPUTDEVICELIST>() as UINT);
+            if err != 0 { panic!("idk windows or something"); }
+        }
+        rid_list = Vec::with_capacity(num_dev as usize);
+        if num_dev == 0 { return; }
+        unsafe {
+            num_dev = GetRawInputDeviceList(rid_list.as_mut_ptr(), &mut num_dev, size_of::<RAWINPUTDEVICELIST>() as UINT);
+            if num_dev == UINT_MAX {
+                if GetLastError() != ERROR_INSUFFICIENT_BUFFER {
+                    panic!("idk windows or something");
+                }
+                continue; // Devices were added since last check, rerun
+            }
+            rid_list.set_len(num_dev as usize);
+        }
+        break;
+    }
+    
+    for (i, ridl) in rid_list.iter().enumerate() {
+        println!("{i}: {}", ridl.dwType);
+    }
+
+    
+
+
+
+    // let rid: RAWINPUTDEVICE = RAWINPUTDEVICE { 
+    //     usUsagePage: 1, // HID_USAGE_PAGE_GENERIC
+    //     usUsage: 2, // HID_USAGE_GENERIC_KEYBOARD
+    //     dwFlags: RIDEV_NOLEGACY, // adds keyboard and also ignores legacy keyboard messages
+    //     hwndTarget: HWND_DESKTOP, // no target window
+    // };
+
+    // unsafe {
+    //     RegisterRawInputDevices(&rid, uiNumDevices, cbSize);
+    // }
 
 }
