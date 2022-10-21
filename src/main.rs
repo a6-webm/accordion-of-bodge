@@ -26,10 +26,8 @@ impl CsvParser {
     fn cells_as_vec(&self, s: &str) -> Vec<String>{
         let mut out: Vec<String> = Vec::new();
         for caps in self.regex.captures_iter(s) {
-            for group in caps.iter().skip(1) {
-                if let Some(m) = group {
-                    out.push(m.as_str().to_owned());
-                }
+            for m in caps.iter().skip(1).flatten() {
+                out.push(m.as_str().to_owned());
             }
         }
         out
@@ -85,5 +83,7 @@ fn main() {
         };
         key_map.insert(key.to_owned(), chord);
     }
+
+    println!("key_map: {:?}", key_map);
 
 }
