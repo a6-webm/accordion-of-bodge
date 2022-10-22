@@ -1,0 +1,16 @@
+add midi crate to output midi notes into a virtual midi device
+ - redo midi representation?
+
+how are we going to capture inputs?
+ - tab into window that does nothing with inputs?
+ - some way to properly capture inputs and have this toggle with a key press?
+   - or maybe not toggle at all cause u've plugged in multiple keyboards
+ - something about focus window?
+ - something about BlockInput?
+ - is rawinput going to send key repeat messages?
+
+include functionality to map any number of CSV file maps to any number of plugged in keyboards
+
+GUI?
+
+notification area icon?
