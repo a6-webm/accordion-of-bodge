@@ -4,22 +4,20 @@
 // parse CSV of notes/chords mapped to keyboard(||stradella bass system?)
 
 use std::collections::HashMap;
-use std::ffi::c_uint;
 use std::mem::size_of;
-use std::{env, fs};
+use std::ptr::{null_mut, null};
+use std::thread::sleep;
+use std::time::Duration;
+use std::{env, fs, thread};
 use regex::Regex;
-use winapi::shared::basetsd::PUINT32;
-use winapi::shared::minwindef::UINT;
-use winapi::shared::ntdef::NULL;
-use winapi::shared::winerror::ERROR_INSUFFICIENT_BUFFER;
-use winapi::um::errhandlingapi::GetLastError;
-use winapi::um::winuser::{GetRawInputDeviceList, PRAWINPUTDEVICELIST, RAWINPUTDEVICE, RAWINPUTDEVICELIST};
-use winapi::vc::limits::UINT_MAX;
-use crate::lib::{Chord, KeyCode, MidiNote};
+use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM};
+use winapi::shared::windef::{HWND};
+use winapi::um::libloaderapi::GetModuleHandleW;
+use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOA, STARTUPINFOW};
+use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, ShowWindow, WS_VISIBLE, CS_HREDRAW, CS_VREDRAW, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices};
 
 mod lib;
-
-
+use crate::lib::{Chord, KeyCode, MidiNote};
 
 struct CsvParser {
     regex: Regex,
@@ -95,6 +93,107 @@ fn main() {
 
     // println!("key_map: {:?}", key_map);
 
-    
+    let rid_tlc = RAWINPUTDEVICE {
+        usUsagePage: 1, // HID_USAGE_PAGE_GENERIC
+        usUsage: 6, // HID_USAGE_GENERIC_KEYBOARD
+        dwFlags: RIDEV_NOLEGACY, // adds keyboard and also ignores legacy keyboard messages // TODO might not want this to ignore legacy
+        hwndTarget: null_mut(), // follows keyboard focus
+    };
 
+    unsafe { 
+        if RegisterRawInputDevices(&rid_tlc, 1, size_of::<RAWINPUTDEVICE>() as UINT) == 0 {
+            panic!("failed to register raw input TLC");
+        }
+    }
+
+    let h_instance = unsafe { GetModuleHandleW(null_mut()) };
+
+    let mut startup_info: STARTUPINFOW;
+    unsafe {
+        startup_info = std::mem::zeroed();
+        GetStartupInfoW(&mut startup_info);
+    };
+
+    let class_name = win32_string("my_first_window");
+
+    let wc = WNDCLASSEXW {
+        cbSize: size_of::<WNDCLASSEXW>() as u32,
+        style: 0,
+        lpfnWndProc: Some(wnd_proc),
+        cbClsExtra: 0,
+        cbWndExtra: 0,
+        hInstance: h_instance,
+        hIcon: null_mut(),
+        hCursor: null_mut(),
+        hbrBackground: null_mut(),
+        lpszMenuName: null_mut(),
+        lpszClassName: class_name.as_ptr(),
+        hIconSm: null_mut(),
+    };
+
+    unsafe { RegisterClassExW(&wc); }
+
+    let hwnd: HWND = unsafe { CreateWindowExW(
+            0,
+            class_name.as_ptr(),
+            win32_string("the bruh window").as_ptr(),
+            WS_VISIBLE | WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            null_mut(),
+            null_mut(),
+            h_instance,
+            null_mut(),
+    )};
+    if hwnd.is_null() { panic!("failed to create window"); }
+
+    unsafe {
+        let mut lp_msg: MSG = std::mem::zeroed();
+        println!("Thread started");
+        while dbg!(GetMessageW(&mut lp_msg, 0 as HWND, 0, 0) > 0) {
+            dbg!(DispatchMessageW(&lp_msg));
+        }
+    }
+
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
+    use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY, WM_INPUT, RAWINPUT, GetRawInputData, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, RIM_TYPEKEYBOARD}, shared::{minwindef::LPVOID, winerror::FAILED}};
+
+    match dbg!(i_message) {
+        WM_DESTROY => {
+            dbg!(PostQuitMessage(0));
+            return 0;
+        },
+        WM_INPUT => {
+            let mut rid_size: UINT = 0;
+            GetRawInputData(l_param as HRAWINPUT, RID_INPUT, null_mut(), &mut rid_size, size_of::<RAWINPUTHEADER>() as UINT);
+            if rid_size == 0 { return 0; } // not sure if this can happen, but microsoft docs do this
+            let mut raw_data_buffer: Vec<u8> = Vec::with_capacity(rid_size.try_into().unwrap());
+
+            if rid_size != 
+                GetRawInputData(l_param as HRAWINPUT, RID_INPUT, raw_data_buffer.as_mut_ptr() as LPVOID, &mut rid_size, size_of::<RAWINPUTHEADER>() as UINT) {
+                    println!("GetRawInputData does not return correct size!");
+            }
+
+            let raw: &RAWINPUT = &*(raw_data_buffer.as_ptr() as *const RAWINPUT);
+
+            if (raw.header.dwType == RIM_TYPEKEYBOARD) {
+                dbg!(raw.data.keyboard().MakeCode);
+            }
+
+            return 0;
+        },
+        _ => DefWindowProcW(h_wnd, i_message, w_param, l_param),
+    }
+}
+
+#[cfg(windows)]
+fn win32_string( value : &str ) -> Vec<u16> {
+    use std::{ffi::OsStr, os::windows::prelude::OsStrExt, iter::once};
+
+    OsStr::new( value ).encode_wide().chain( once( 0 ) ).collect()
 }
