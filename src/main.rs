@@ -11,10 +11,11 @@ use std::time::Duration;
 use std::{env, fs, thread};
 use regex::Regex;
 use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM};
+use winapi::ctypes::c_int;
 use winapi::shared::windef::{HWND};
 use winapi::um::libloaderapi::GetModuleHandleW;
 use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOA, STARTUPINFOW};
-use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, ShowWindow, WS_VISIBLE, CS_HREDRAW, CS_VREDRAW, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK};
+use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, ShowWindow, WS_VISIBLE, CS_HREDRAW, CS_VREDRAW, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, WH_GETMESSAGE, HOOKPROC, UnhookWindowsHookEx};
 
 mod lib;
 use crate::lib::{Chord, KeyCode, MidiNote};
@@ -149,6 +150,11 @@ fn main() {
         }
     }
 
+    let msg_hook = unsafe {
+        SetWindowsHookExW(WH_GETMESSAGE, Some(get_msg_proc), null_mut(), 0)
+    };
+    if msg_hook.is_null() { panic!("failed to set msg hook"); }
+
     unsafe {
         let mut lp_msg: MSG = std::mem::zeroed();
         println!("Thread started");
@@ -157,6 +163,15 @@ fn main() {
         }
     }
 
+    unsafe { UnhookWindowsHookEx(msg_hook); }
+
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn get_msg_proc(code: c_int, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
+    
+
+    todo!()
 }
 
 #[cfg(windows)]
