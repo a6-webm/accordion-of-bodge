@@ -14,7 +14,7 @@ use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM};
 use winapi::shared::windef::{HWND};
 use winapi::um::libloaderapi::GetModuleHandleW;
 use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOA, STARTUPINFOW};
-use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, ShowWindow, WS_VISIBLE, CS_HREDRAW, CS_VREDRAW, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices};
+use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, ShowWindow, WS_VISIBLE, CS_HREDRAW, CS_VREDRAW, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK};
 
 mod lib;
 use crate::lib::{Chord, KeyCode, MidiNote};
@@ -93,19 +93,6 @@ fn main() {
 
     // println!("key_map: {:?}", key_map);
 
-    let rid_tlc = RAWINPUTDEVICE {
-        usUsagePage: 1, // HID_USAGE_PAGE_GENERIC
-        usUsage: 6, // HID_USAGE_GENERIC_KEYBOARD
-        dwFlags: RIDEV_NOLEGACY, // adds keyboard and also ignores legacy keyboard messages // TODO might not want this to ignore legacy
-        hwndTarget: null_mut(), // follows keyboard focus
-    };
-
-    unsafe { 
-        if RegisterRawInputDevices(&rid_tlc, 1, size_of::<RAWINPUTDEVICE>() as UINT) == 0 {
-            panic!("failed to register raw input TLC");
-        }
-    }
-
     let h_instance = unsafe { GetModuleHandleW(null_mut()) };
 
     let mut startup_info: STARTUPINFOW;
@@ -148,6 +135,19 @@ fn main() {
             null_mut(),
     )};
     if hwnd.is_null() { panic!("failed to create window"); }
+
+    let rid_tlc = RAWINPUTDEVICE {
+        usUsagePage: 1, // HID_USAGE_PAGE_GENERIC
+        usUsage: 6, // HID_USAGE_GENERIC_KEYBOARD
+        dwFlags: RIDEV_NOLEGACY | RIDEV_INPUTSINK, // ignores legacy keyboard messages and reads input when not focused
+        hwndTarget: hwnd,
+    };
+
+    unsafe { 
+        if RegisterRawInputDevices(&rid_tlc, 1, size_of::<RAWINPUTDEVICE>() as UINT) == 0 {
+            panic!("failed to register raw input TLC");
+        }
+    }
 
     unsafe {
         let mut lp_msg: MSG = std::mem::zeroed();
