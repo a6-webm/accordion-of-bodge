@@ -4,17 +4,23 @@
 // parse CSV of notes/chords mapped to keyboard(||stradella bass system?)
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::mem::size_of;
+use std::os::windows::prelude::OsStringExt;
 use std::ptr::{null_mut, null};
 use std::thread::sleep;
 use std::time::Duration;
 use std::{env, fs, thread};
 use regex::Regex;
-use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM};
+use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM, HLOCAL};
 use winapi::ctypes::c_int;
+use winapi::shared::ntdef::LPSTR;
 use winapi::shared::windef::{HWND};
+use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::libloaderapi::GetModuleHandleW;
 use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOA, STARTUPINFOW};
+use winapi::um::winbase::{FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_ALLOCATE_BUFFER, FORMAT_MESSAGE_IGNORE_INSERTS, LocalFree};
+use winapi::um::winnt::{MAKELANGID, LANG_NEUTRAL, SUBLANG_DEFAULT, LPWSTR};
 use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, ShowWindow, WS_VISIBLE, CS_HREDRAW, CS_VREDRAW, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, WH_GETMESSAGE, HOOKPROC, UnhookWindowsHookEx, HC_ACTION};
 
 mod lib;
@@ -41,6 +47,8 @@ impl CsvParser {
         out
     }
 }
+
+static mut GLOB_HWND: HWND = null_mut();
 
 fn main() {
     // let csv_parser = CsvParser::new();
@@ -137,6 +145,8 @@ fn main() {
     )};
     if hwnd.is_null() { panic!("failed to create window"); }
 
+    unsafe{ GLOB_HWND = hwnd; }
+
     let rid_tlc = RAWINPUTDEVICE {
         usUsagePage: 1, // HID_USAGE_PAGE_GENERIC
         usUsage: 6, // HID_USAGE_GENERIC_KEYBOARD
@@ -153,11 +163,23 @@ fn main() {
     let msg_hook = unsafe {
         SetWindowsHookExW(WH_GETMESSAGE, Some(get_msg_proc), null_mut(), 0)
     };
-    if msg_hook.is_null() { panic!("failed to set msg hook"); }
+    if msg_hook.is_null() {
+        unsafe{
+            let message_buffer: LPWSTR = null_mut();
+            let errorMessageID = GetLastError();
+            let size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                null_mut(), errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT).into(), &message_buffer as *const *mut u16 as *mut u16, 0, null_mut());
+            let str = OsString::from_wide(std::slice::from_raw_parts(dbg!(message_buffer), size as usize));
+            println!("{:?}", str);
+            LocalFree(message_buffer as HLOCAL);
+        }
+
+        panic!("failed to set msg hook");
+    }
 
     unsafe {
         let mut lp_msg: MSG = std::mem::zeroed();
-        println!("Thread started");
+        println!("Msg loop started");
         while dbg!(GetMessageW(&mut lp_msg, 0 as HWND, 0, 0) > 0) {
             dbg!(DispatchMessageW(&lp_msg));
         }
@@ -173,12 +195,21 @@ unsafe extern "system" fn get_msg_proc(code: c_int, w_param: WPARAM, l_param: LP
     match code {
         HC_ACTION => {
             let msg: &MSG = &*(l_param as *mut MSG);
-            match (msg.hwnd == todo!("how do we pass our app hwnd here"), msg.message) {
-                (false, WM_INPUT) => return CallNextHookEx(null_mut(), 1, w_param, l_param),
-                (false, WM_KEYDOWN) => return CallNextHookEx(null_mut(), 1, w_param, l_param),
-                (false, WM_SYSKEYDOWN) => return CallNextHookEx(null_mut(), 1, w_param, l_param),
-                (false, _) => return CallNextHookEx(null_mut(), code, w_param, l_param),
-                (true, _) => return CallNextHookEx(null_mut(), code, w_param, l_param),
+            match (msg.hwnd == GLOB_HWND, msg.message) {
+                (false, WM_INPUT) => {
+                    println!("Blocked keypress");
+                    return CallNextHookEx(null_mut(), 1, w_param, l_param);
+                },
+                (false, WM_KEYDOWN) => {
+                    println!("Blocked keypress");
+                    return CallNextHookEx(null_mut(), 1, w_param, l_param);
+                },
+                (false, WM_SYSKEYDOWN) => {
+                    println!("Blocked keypress");
+                    return CallNextHookEx(null_mut(), 1, w_param, l_param);
+                },
+                (false, _) => {return CallNextHookEx(null_mut(), code, w_param, l_param);},
+                (true, _) => {return CallNextHookEx(null_mut(), code, w_param, l_param);},
             }
             return CallNextHookEx(null_mut(), code, w_param, l_param)
         },
