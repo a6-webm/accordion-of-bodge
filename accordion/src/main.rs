@@ -4,20 +4,21 @@
 // parse CSV of notes/chords mapped to keyboard(||stradella bass system?)
 
 use std::collections::HashMap;
-use std::ffi::OsString;
+use std::ffi::{OsString};
 use std::mem::size_of;
 use std::os::windows::prelude::OsStringExt;
 use std::ptr::{null_mut, null};
+use std::str::FromStr;
 use std::thread::sleep;
 use std::time::Duration;
 use std::{env, fs, thread};
 use regex::Regex;
 use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM, HLOCAL, HINSTANCE};
 use winapi::ctypes::c_int;
-use winapi::shared::ntdef::LPSTR;
+use winapi::shared::ntdef::{LPSTR, LPCSTR};
 use winapi::shared::windef::{HWND};
 use winapi::um::errhandlingapi::GetLastError;
-use winapi::um::libloaderapi::{GetModuleHandleW, LoadLibraryW, GetProcAddress};
+use winapi::um::libloaderapi::{GetModuleHandleW, LoadLibraryW, GetProcAddress, FreeLibrary};
 use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOA, STARTUPINFOW};
 use winapi::um::winbase::{FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_ALLOCATE_BUFFER, FORMAT_MESSAGE_IGNORE_INSERTS, LocalFree};
 use winapi::um::winnt::{MAKELANGID, LANG_NEUTRAL, SUBLANG_DEFAULT, LPWSTR};
@@ -160,49 +161,64 @@ fn main() {
         }
     }
 
-    let h_inst_lib: HINSTANCE = unsafe { LoadLibraryW(OsString::from("msg_hook.dll")) };
+    let h_inst_lib: HINSTANCE = unsafe { LoadLibraryW(win32_string("msg_hook.dll").as_mut_ptr()) };
     if h_inst_lib.is_null() { panic!("could not link dll"); }
-    let hook_proc = unsafe { GetProcAddress(h_inst_lib, OsString::from("get_msg_proc")) };
+    
+    let p_set_hwnd = unsafe { GetProcAddress(h_inst_lib, "set_hwnd\0".as_ptr() as LPCSTR) };
+    if p_set_hwnd.is_null() {
+        unsafe{ FreeLibrary(h_inst_lib); }
+        panic!("couldn't retrieve set_hwnd from dll");
+    }
+    let set_hwnd: unsafe extern "system" fn (HWND) = unsafe { std::mem::transmute(p_set_hwnd) };
+    unsafe { set_hwnd(hwnd); }
 
-    let msg_hook = unsafe {
-        SetWindowsHookExW(WH_GETMESSAGE, Some(get_msg_proc), null_mut(), 0)
-    };
+    let p_hook_proc = unsafe { GetProcAddress(h_inst_lib, "get_msg_proc\0".as_ptr() as LPCSTR) };
+    if p_hook_proc.is_null() { panic!("couldn't retrieve get_msg_proc from dll") }
+    let hook_proc: HOOKPROC = unsafe { Some(std::mem::transmute(p_hook_proc)) };
+
+    let msg_hook = unsafe { SetWindowsHookExW(WH_GETMESSAGE, hook_proc, h_inst_lib, 0) };
     if msg_hook.is_null() {
-        unsafe{
-            let message_buffer: LPWSTR = null_mut();
-            let errorMessageID = GetLastError();
-            let size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                null_mut(), errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT).into(), &message_buffer as *const *mut u16 as *mut u16, 0, null_mut());
-            let str = OsString::from_wide(std::slice::from_raw_parts(dbg!(message_buffer), size as usize));
-            println!("{:?}", str);
-            LocalFree(message_buffer as HLOCAL);
-        }
-
+        print_last_win_error();
         panic!("failed to set msg hook");
     }
 
     unsafe {
         let mut lp_msg: MSG = std::mem::zeroed();
         println!("Msg loop started");
-        while dbg!(GetMessageW(&mut lp_msg, 0 as HWND, 0, 0) > 0) {
-            dbg!(DispatchMessageW(&lp_msg));
+        while GetMessageW(&mut lp_msg, 0 as HWND, 0, 0) > 0 {
+            DispatchMessageW(&lp_msg);
         }
     }
 
+    unsafe{ FreeLibrary(h_inst_lib); }
+
     unsafe { UnhookWindowsHookEx(msg_hook); }
 
+}
+
+ fn print_last_win_error() {
+    unsafe {
+        let message_buffer: LPWSTR = null_mut();
+        let error_message_id = GetLastError();
+        let size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            null_mut(), error_message_id, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT).into(), &message_buffer as *const LPWSTR as LPWSTR, 0, null_mut());
+        let str = OsString::from_wide(std::slice::from_raw_parts(message_buffer, size as usize));
+        println!("GetLastError: {:?}", str);
+        LocalFree(message_buffer as HLOCAL);
+    }
 }
 
 #[cfg(windows)]
 unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY, WM_INPUT, RAWINPUT, GetRawInputData, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, RIM_TYPEKEYBOARD}, shared::{minwindef::LPVOID, winerror::FAILED}};
 
-    match dbg!(i_message) {
+    match i_message {
         WM_DESTROY => {
             dbg!(PostQuitMessage(0));
             return 0;
         },
         WM_INPUT => {
+            print!("wnd_proc: WM_INPUT, ");
             let mut rid_size: UINT = 0;
             GetRawInputData(l_param as HRAWINPUT, RID_INPUT, null_mut(), &mut rid_size, size_of::<RAWINPUTHEADER>() as UINT);
             if rid_size == 0 { return 0; } // not sure if this can happen, but microsoft docs do this
