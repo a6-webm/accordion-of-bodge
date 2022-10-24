@@ -15,7 +15,7 @@ use winapi::ctypes::c_int;
 use winapi::shared::windef::{HWND};
 use winapi::um::libloaderapi::GetModuleHandleW;
 use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOA, STARTUPINFOW};
-use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, ShowWindow, WS_VISIBLE, CS_HREDRAW, CS_VREDRAW, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, WH_GETMESSAGE, HOOKPROC, UnhookWindowsHookEx};
+use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, ShowWindow, WS_VISIBLE, CS_HREDRAW, CS_VREDRAW, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, WH_GETMESSAGE, HOOKPROC, UnhookWindowsHookEx, HC_ACTION};
 
 mod lib;
 use crate::lib::{Chord, KeyCode, MidiNote};
@@ -169,9 +169,21 @@ fn main() {
 
 #[cfg(windows)]
 unsafe extern "system" fn get_msg_proc(code: c_int, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
-    
-
-    todo!()
+    use winapi::um::winuser::{CallNextHookEx, WM_INPUT, WM_KEYDOWN, WM_SYSKEYDOWN};
+    match code {
+        HC_ACTION => {
+            let msg: &MSG = &*(l_param as *mut MSG);
+            match (msg.hwnd == todo!("how do we pass our app hwnd here"), msg.message) {
+                (false, WM_INPUT) => return CallNextHookEx(null_mut(), 1, w_param, l_param),
+                (false, WM_KEYDOWN) => return CallNextHookEx(null_mut(), 1, w_param, l_param),
+                (false, WM_SYSKEYDOWN) => return CallNextHookEx(null_mut(), 1, w_param, l_param),
+                (false, _) => return CallNextHookEx(null_mut(), code, w_param, l_param),
+                (true, _) => return CallNextHookEx(null_mut(), code, w_param, l_param),
+            }
+            return CallNextHookEx(null_mut(), code, w_param, l_param)
+        },
+        _ => return CallNextHookEx(null_mut(), code, w_param, l_param),
+    }
 }
 
 #[cfg(windows)]
