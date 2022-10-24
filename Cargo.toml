@@ -1,10 +1,5 @@
-[package]
-name = "accordion-of-bodge"
-version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-regex = "1.6.0"
-winapi = { version = "0.3", features = ["winuser", "errhandlingapi", "winerror", "libloaderapi", "processthreadsapi", "winbase"] }
+[workspace]
+members = [
+    "accordion",
+    "msg_hook"
+]

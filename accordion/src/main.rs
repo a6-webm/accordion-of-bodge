@@ -12,12 +12,12 @@ use std::thread::sleep;
 use std::time::Duration;
 use std::{env, fs, thread};
 use regex::Regex;
-use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM, HLOCAL};
+use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM, HLOCAL, HINSTANCE};
 use winapi::ctypes::c_int;
 use winapi::shared::ntdef::LPSTR;
 use winapi::shared::windef::{HWND};
 use winapi::um::errhandlingapi::GetLastError;
-use winapi::um::libloaderapi::GetModuleHandleW;
+use winapi::um::libloaderapi::{GetModuleHandleW, LoadLibraryW, GetProcAddress};
 use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOA, STARTUPINFOW};
 use winapi::um::winbase::{FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_ALLOCATE_BUFFER, FORMAT_MESSAGE_IGNORE_INSERTS, LocalFree};
 use winapi::um::winnt::{MAKELANGID, LANG_NEUTRAL, SUBLANG_DEFAULT, LPWSTR};
@@ -160,6 +160,10 @@ fn main() {
         }
     }
 
+    let h_inst_lib: HINSTANCE = unsafe { LoadLibraryW(OsString::from("msg_hook.dll")) };
+    if h_inst_lib.is_null() { panic!("could not link dll"); }
+    let hook_proc = unsafe { GetProcAddress(h_inst_lib, OsString::from("get_msg_proc")) };
+
     let msg_hook = unsafe {
         SetWindowsHookExW(WH_GETMESSAGE, Some(get_msg_proc), null_mut(), 0)
     };
@@ -190,34 +194,6 @@ fn main() {
 }
 
 #[cfg(windows)]
-unsafe extern "system" fn get_msg_proc(code: c_int, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
-    use winapi::um::winuser::{CallNextHookEx, WM_INPUT, WM_KEYDOWN, WM_SYSKEYDOWN};
-    match code {
-        HC_ACTION => {
-            let msg: &MSG = &*(l_param as *mut MSG);
-            match (msg.hwnd == GLOB_HWND, msg.message) {
-                (false, WM_INPUT) => {
-                    println!("Blocked keypress");
-                    return CallNextHookEx(null_mut(), 1, w_param, l_param);
-                },
-                (false, WM_KEYDOWN) => {
-                    println!("Blocked keypress");
-                    return CallNextHookEx(null_mut(), 1, w_param, l_param);
-                },
-                (false, WM_SYSKEYDOWN) => {
-                    println!("Blocked keypress");
-                    return CallNextHookEx(null_mut(), 1, w_param, l_param);
-                },
-                (false, _) => {return CallNextHookEx(null_mut(), code, w_param, l_param);},
-                (true, _) => {return CallNextHookEx(null_mut(), code, w_param, l_param);},
-            }
-            return CallNextHookEx(null_mut(), code, w_param, l_param)
-        },
-        _ => return CallNextHookEx(null_mut(), code, w_param, l_param),
-    }
-}
-
-#[cfg(windows)]
 unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY, WM_INPUT, RAWINPUT, GetRawInputData, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, RIM_TYPEKEYBOARD}, shared::{minwindef::LPVOID, winerror::FAILED}};
 
@@ -239,7 +215,7 @@ unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM
 
             let raw: &RAWINPUT = &*(raw_data_buffer.as_ptr() as *const RAWINPUT);
 
-            if (raw.header.dwType == RIM_TYPEKEYBOARD) {
+            if raw.header.dwType == RIM_TYPEKEYBOARD {
                 dbg!(raw.data.keyboard().MakeCode);
             }
 
