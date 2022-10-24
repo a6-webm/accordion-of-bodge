@@ -9,5 +9,7 @@ no GUI
 
 notification area icon?
 
-intercept messages for any other process other than ours with a msg hook
-this needs to be toggleable by key press, probably implement that into the msg_proc
+shamelessly learn the correct implementation of what ur trying to do from LuaMacros,
+    - Shared memory instead of global vars
+    - A keyboard hook?
+    - Some way to pass a msg to the keyboard hook telling it whether it should kill an input or not ig
