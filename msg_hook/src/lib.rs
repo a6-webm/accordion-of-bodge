@@ -1,38 +1,35 @@
+#![allow(clippy::missing_safety_doc, clippy::needless_return)]
+
 use std::ptr::null_mut;
 
-use winapi::{ctypes::c_int, shared::{minwindef::{WPARAM, LPARAM, LRESULT}, windef::HWND}, um::{winuser::{MSG, HC_ACTION}}};
+use winapi::{ctypes::c_int, shared::{minwindef::{WPARAM, LPARAM, LRESULT, UINT}, windef::HWND}, um::{winuser::{MSG, HC_ACTION, SendMessageW, SendNotifyMessageW, WM_USER, KBDLLHOOKSTRUCT}}};
+
+const WM_SHOULDBLKKEY: UINT = WM_USER + 300;
 
 static mut GLOB_HWND: HWND = null_mut();
 
 #[no_mangle]
 pub unsafe extern "system" fn set_hwnd(hwnd: HWND) {
-    dbg!(GLOB_HWND);
     GLOB_HWND = hwnd;
-    dbg!(GLOB_HWND);
+    dbg!(("hook dll set window: ", GLOB_HWND));
 }
 
 #[no_mangle]
-pub unsafe extern "system" fn get_msg_proc(code: c_int, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
-    use winapi::um::winuser::{CallNextHookEx, WM_INPUT, WM_KEYDOWN, WM_SYSKEYDOWN};
+pub unsafe extern "system" fn key_hook_proc(code: c_int, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
+    use winapi::um::winuser::{CallNextHookEx};
     if code < 0 || code == HC_ACTION {
+        dbg!("Hook: no action");
         return CallNextHookEx(null_mut(), code, w_param, l_param);
     }
-    let msg: &MSG = &*(l_param as *mut MSG);
-    println!("msg_hook: processing msg");
-    match (msg.hwnd == GLOB_HWND, msg.message) {
-        (false, WM_INPUT) => {
-            println!("Blocked keypress");
-            return 1;
+    let kill = SendMessageW(GLOB_HWND, WM_SHOULDBLKKEY, 0, 0);
+    match kill {
+        0 => {
+            dbg!("Hook: no kill");
+            return CallNextHookEx(null_mut(), code, w_param, l_param);
         },
-        (false, WM_KEYDOWN) => {
-            println!("Blocked keypress");
+        _ => {
+            dbg!("Hook: kill");
             return 1;
-        },
-        (false, WM_SYSKEYDOWN) => {
-            println!("Blocked keypress");
-            return 1;
-        },
-        (false, _) => {return CallNextHookEx(null_mut(), code, w_param, l_param);},
-        (true, _) => {return CallNextHookEx(null_mut(), code, w_param, l_param);},
+        }
     }
 }
