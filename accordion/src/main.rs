@@ -1,3 +1,5 @@
+#![allow(clippy::missing_safety_doc, clippy::needless_return)]
+
 // enum of Keyboard keys
 // f(key) -> GlovePIE keycode
 
@@ -22,10 +24,12 @@ use winapi::um::libloaderapi::{GetModuleHandleW, LoadLibraryW, GetProcAddress, F
 use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOA, STARTUPINFOW};
 use winapi::um::winbase::{FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_ALLOCATE_BUFFER, FORMAT_MESSAGE_IGNORE_INSERTS, LocalFree};
 use winapi::um::winnt::{MAKELANGID, LANG_NEUTRAL, SUBLANG_DEFAULT, LPWSTR};
-use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, ShowWindow, WS_VISIBLE, CS_HREDRAW, CS_VREDRAW, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, WH_GETMESSAGE, HOOKPROC, UnhookWindowsHookEx, HC_ACTION};
+use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, ShowWindow, WS_VISIBLE, CS_HREDRAW, CS_VREDRAW, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, WH_GETMESSAGE, HOOKPROC, UnhookWindowsHookEx, HC_ACTION, WM_USER, WH_SYSMSGFILTER, WH_MSGFILTER, WH_KEYBOARD_LL, WH_KEYBOARD};
 
 mod lib;
 use crate::lib::{Chord, KeyCode, MidiNote};
+
+const WM_HOOKDID: UINT = WM_USER + 300;
 
 struct CsvParser {
     regex: Regex,
@@ -171,12 +175,12 @@ fn main() {
     }
     let set_hwnd: unsafe extern "system" fn (HWND) = unsafe { std::mem::transmute(p_set_hwnd) };
     unsafe { set_hwnd(hwnd); }
-
-    let p_hook_proc = unsafe { GetProcAddress(h_inst_lib, "get_msg_proc\0".as_ptr() as LPCSTR) };
+    
+    let p_hook_proc = unsafe { GetProcAddress(h_inst_lib, "test_msg_proc\0".as_ptr() as LPCSTR) };
     if p_hook_proc.is_null() { panic!("couldn't retrieve get_msg_proc from dll") }
-    let hook_proc: HOOKPROC = unsafe { Some(std::mem::transmute(p_hook_proc)) };
+    let hook_proc: unsafe extern "system" fn (c_int, WPARAM, LPARAM) -> LRESULT = unsafe { std::mem::transmute(p_hook_proc) };
 
-    let msg_hook = unsafe { SetWindowsHookExW(WH_GETMESSAGE, hook_proc, h_inst_lib, 0) };
+    let msg_hook = unsafe { SetWindowsHookExW(WH_KEYBOARD, Some(hook_proc), h_inst_lib, 0) };
     if msg_hook.is_null() {
         print_last_win_error();
         panic!("failed to set msg hook");
@@ -190,9 +194,11 @@ fn main() {
         }
     }
 
-    unsafe{ FreeLibrary(h_inst_lib); }
-
-    unsafe { UnhookWindowsHookEx(msg_hook); }
+    unsafe{
+        // free other things ig
+        UnhookWindowsHookEx(msg_hook);
+        FreeLibrary(h_inst_lib); 
+    }
 
 }
 
@@ -210,15 +216,18 @@ fn main() {
 
 #[cfg(windows)]
 unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
-    use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY, WM_INPUT, RAWINPUT, GetRawInputData, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, RIM_TYPEKEYBOARD}, shared::{minwindef::LPVOID, winerror::FAILED}};
+    use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY, WM_INPUT, RAWINPUT, GetRawInputData, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, RIM_TYPEKEYBOARD, WM_USER}, shared::{minwindef::LPVOID}};
 
     match i_message {
+        WM_HOOKDID => {
+            dbg!("MsgHook called");
+            return 0;
+        },
         WM_DESTROY => {
             dbg!(PostQuitMessage(0));
             return 0;
         },
         WM_INPUT => {
-            print!("wnd_proc: WM_INPUT, ");
             let mut rid_size: UINT = 0;
             GetRawInputData(l_param as HRAWINPUT, RID_INPUT, null_mut(), &mut rid_size, size_of::<RAWINPUTHEADER>() as UINT);
             if rid_size == 0 { return 0; } // not sure if this can happen, but microsoft docs do this
