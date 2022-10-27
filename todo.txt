@@ -11,5 +11,6 @@ notification area icon?
 
 shamelessly learn the correct implementation of what ur trying to do from LuaMacros,
     - Shared memory instead of global vars
-    - A keyboard hook?
-    - Some way to pass a msg to the keyboard hook telling it whether it should kill an input or not ig
+    - Some KeyLog structure that records past rawinput inputs
+    - A keyboard hook that polls the KeyLog if the input matches something previous or if it should wait until the rawinput comes through
+      - it uses this poll to decide whether to capture the input
