@@ -5,53 +5,53 @@
 
 // parse CSV of notes/chords mapped to keyboard(||stradella bass system?)
 
-use std::collections::HashMap;
+// use std::collections::HashMap;
 use std::ffi::{OsString};
 use std::mem::size_of;
 use std::os::windows::prelude::OsStringExt;
-use std::ptr::{null_mut, null};
-use std::str::FromStr;
-use std::thread::sleep;
-use std::time::Duration;
-use std::{env, fs, thread};
-use regex::Regex;
+use std::ptr::{null_mut};
+// use std::str::FromStr;
+// use std::thread::sleep;
+// use std::time::Duration;
+// use std::{env, fs, thread};
+// use regex::Regex;
 use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM, HLOCAL, HINSTANCE};
 use winapi::ctypes::c_int;
-use winapi::shared::ntdef::{LPSTR, LPCSTR};
+use winapi::shared::ntdef::{LPCSTR};
 use winapi::shared::windef::{HWND};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::libloaderapi::{GetModuleHandleW, LoadLibraryW, GetProcAddress, FreeLibrary};
-use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOA, STARTUPINFOW};
+use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOW};
 use winapi::um::winbase::{FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_ALLOCATE_BUFFER, FORMAT_MESSAGE_IGNORE_INSERTS, LocalFree};
 use winapi::um::winnt::{MAKELANGID, LANG_NEUTRAL, SUBLANG_DEFAULT, LPWSTR};
-use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, ShowWindow, WS_VISIBLE, CS_HREDRAW, CS_VREDRAW, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, WH_GETMESSAGE, HOOKPROC, UnhookWindowsHookEx, HC_ACTION, WM_USER, WH_SYSMSGFILTER, WH_MSGFILTER, WH_KEYBOARD_LL, WH_KEYBOARD};
+use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, WS_VISIBLE, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, UnhookWindowsHookEx, WM_USER, WH_KEYBOARD};
 
-mod lib;
-use crate::lib::{Chord, KeyCode, MidiNote};
+// mod lib;
+// use crate::lib::{Chord, KeyCode, MidiNote};
 
 const WM_HOOKDID: UINT = WM_USER + 300;
 
-struct CsvParser {
-    regex: Regex,
-}
+// struct CsvParser {
+//     regex: Regex,
+// }
 
-impl CsvParser {
-    fn new() -> CsvParser {
-        CsvParser {
-            regex: Regex::new(r#"(?:(?:"(.*?)")|(.*?))(?:(?:,\r?\n)|,|(?:\r?\n)|$)"#).unwrap(),
-        }
-    }
+// impl CsvParser {
+//     fn new() -> CsvParser {
+//         CsvParser {
+//             regex: Regex::new(r#"(?:(?:"(.*?)")|(.*?))(?:(?:,\r?\n)|,|(?:\r?\n)|$)"#).unwrap(),
+//         }
+//     }
 
-    fn cells_as_vec(&self, s: &str) -> Vec<String>{
-        let mut out: Vec<String> = Vec::new();
-        for caps in self.regex.captures_iter(s) {
-            for m in caps.iter().skip(1).flatten() {
-                out.push(m.as_str().to_owned());
-            }
-        }
-        out
-    }
-}
+//     fn cells_as_vec(&self, s: &str) -> Vec<String>{
+//         let mut out: Vec<String> = Vec::new();
+//         for caps in self.regex.captures_iter(s) {
+//             for m in caps.iter().skip(1).flatten() {
+//                 out.push(m.as_str().to_owned());
+//             }
+//         }
+//         out
+//     }
+// }
 
 static mut GLOB_HWND: HWND = null_mut();
 
@@ -216,7 +216,7 @@ fn main() {
 
 #[cfg(windows)]
 unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
-    use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY, WM_INPUT, RAWINPUT, GetRawInputData, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, RIM_TYPEKEYBOARD, WM_USER}, shared::{minwindef::LPVOID}};
+    use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY, WM_INPUT, RAWINPUT, GetRawInputData, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, RIM_TYPEKEYBOARD}, shared::{minwindef::LPVOID}};
 
     match i_message {
         WM_HOOKDID => {
