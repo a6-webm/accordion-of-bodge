@@ -1,3 +1,5 @@
+#![allow(clippy::needless_return)]
+
 use std::fmt::{Display, self};
 use std::num::ParseIntError;
 
