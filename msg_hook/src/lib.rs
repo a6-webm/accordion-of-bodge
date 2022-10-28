@@ -2,7 +2,7 @@
 
 use std::ptr::null_mut;
 
-use winapi::{ctypes::c_int, shared::{minwindef::{WPARAM, LPARAM, LRESULT, UINT}, windef::HWND}, um::{winuser::{MSG, HC_ACTION, SendMessageW, SendNotifyMessageW, WM_USER, KBDLLHOOKSTRUCT}}};
+use winapi::{ctypes::c_int, shared::{minwindef::{WPARAM, LPARAM, LRESULT, UINT}, windef::HWND}, um::{winuser::{HC_ACTION, SendMessageW, WM_USER}}};
 
 const WM_SHOULDBLKKEY: UINT = WM_USER + 300;
 
