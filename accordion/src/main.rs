@@ -112,7 +112,7 @@ fn main() {
     let mut startup_info: STARTUPINFOW;
     unsafe {
         startup_info = std::mem::zeroed();
-        GetStartupInfoW(&mut startup_info);
+        GetStartupInfoW(&mut startup_info); // Don't think I need to free this
     };
 
     let class_name = win32_string("my_first_window");
