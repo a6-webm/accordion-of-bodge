@@ -17,11 +17,11 @@ pub unsafe extern "system" fn set_hwnd(hwnd: HWND) {
 #[no_mangle]
 pub unsafe extern "system" fn key_hook_proc(code: c_int, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     use winapi::um::winuser::{CallNextHookEx};
-    if code < 0 || code == HC_ACTION {
+    if code < 0 || code != HC_ACTION { // normal hooks process when code == HC_ACTION, but we want to intercept any messages we see
         dbg!("Hook: no action");
         return CallNextHookEx(null_mut(), code, w_param, l_param);
     }
-    let kill = SendMessageW(GLOB_HWND, WM_SHOULDBLKKEY, 0, 0);
+    let kill = SendMessageW(GLOB_HWND, WM_SHOULDBLKKEY, w_param, l_param);
     match kill {
         0 => {
             dbg!("Hook: no kill");
