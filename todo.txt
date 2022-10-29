@@ -15,3 +15,5 @@ shamelessly learn the correct implementation of what ur trying to do from LuaMac
     - do we want to detect altgr? (eh)
   - A keyboard hook that polls the KeyLog if the input matches something previous or if it should wait until the rawinput comes through
     - it uses this poll to decide whether to capture the input
+
+very real chance that I need to go back and free lots of data from all my windows function calls (look at example code to figure this out)
