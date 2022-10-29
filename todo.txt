@@ -10,7 +10,8 @@ no GUI
 notification area icon?
 
 shamelessly learn the correct implementation of what ur trying to do from LuaMacros,
-    - Shared memory instead of global vars
-    - Some KeyLog structure that records past rawinput inputs
-    - A keyboard hook that polls the KeyLog if the input matches something previous or if it should wait until the rawinput comes through
-      - it uses this poll to decide whether to capture the input
+  - Shared memory instead of global vars
+  - Some KeyLog structure that records past rawinput inputs
+    - do we want to detect altgr? (eh)
+  - A keyboard hook that polls the KeyLog if the input matches something previous or if it should wait until the rawinput comes through
+    - it uses this poll to decide whether to capture the input
