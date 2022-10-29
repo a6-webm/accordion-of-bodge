@@ -11,7 +11,7 @@ use std::ffi::{OsString};
 use std::mem::size_of;
 use std::os::windows::prelude::OsStringExt;
 use std::ptr::{null_mut};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 // use std::str::FromStr;
 // use std::thread::sleep;
 // use std::time::Duration;
@@ -26,12 +26,13 @@ use winapi::um::libloaderapi::{GetModuleHandleW, LoadLibraryW, GetProcAddress, F
 use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOW};
 use winapi::um::winbase::{FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_ALLOCATE_BUFFER, FORMAT_MESSAGE_IGNORE_INSERTS, LocalFree};
 use winapi::um::winnt::{MAKELANGID, LANG_NEUTRAL, SUBLANG_DEFAULT, LPWSTR, HANDLE};
-use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, WS_VISIBLE, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, UnhookWindowsHookEx, WM_USER, WH_KEYBOARD};
+use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, WS_VISIBLE, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, UnhookWindowsHookEx, WM_USER, WH_KEYBOARD, RAWINPUT, WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP};
 
 // mod lib;
 // use crate::lib::{Chord, KeyCode, MidiNote};
 
 const WM_HOOKDID: UINT = WM_USER + 300;
+static mut RAW_KEY_LOGS: RawKeyLogs = RawKeyLogs {ind: 0, records: Vec::new()}; // should really switch to using shared memory lmao, christ
 
 #[derive(Debug, Clone)]
 enum KDir {
@@ -40,10 +41,23 @@ enum KDir {
 }
 
 #[derive(Debug, Clone)]
-struct RawRecord {
+struct RawKRecord {
     k_dir: KDir,
     h_dev: HANDLE,
     v_k_code: USHORT,
+}
+
+impl RawKRecord {
+    fn new(r: &RAWINPUT) -> RawKRecord {
+        let k_dir = unsafe { match r.data.keyboard().Message {
+            WM_KEYDOWN | WM_SYSKEYDOWN => KDir::Down,
+            WM_KEYUP | WM_SYSKEYUP => KDir::Up,
+            _ => unreachable!("recieved non key message from rawinput"),
+        } };
+        let h_dev = r.header.hDevice;
+        let v_k_code = unsafe { r.data.keyboard().VKey };
+        return RawKRecord {k_dir, h_dev, v_k_code};
+    }
 }
 
 struct RawKeyLogIter<'a> {
@@ -52,48 +66,38 @@ struct RawKeyLogIter<'a> {
 }
 
 struct RawKeyLogs {
-    logs: Vec<RawRecord>,
+    records: Vec<Option<RawKRecord>>,
     ind: usize,
 }
 
 impl RawKeyLogs {
     fn new(size: usize) -> Self {
-        let mut logs = Vec::with_capacity(size);
-        logs.fill(RawRecord { k_dir: KDir::Up, h_dev: null_mut(), v_k_code: 0 });
-        return RawKeyLogs { logs: Vec::new(), ind: 0 }
+        RawKeyLogs { records: vec![None; size], ind: size - 1 }
     }
 
     fn iter(&self) -> RawKeyLogIter {
         RawKeyLogIter { logs: self, i: 0 }
     }
 
-    fn push(&mut self, r: RawRecord) {
+    fn push(&mut self, r: RawKRecord) {
         self.ind += 1;
-        self.ind %= self.logs.len();
-        self.logs[self.ind] = r;
+        self.ind %= self.records.len();
+        self.records[self.ind] = Some(r);
     }
 }
 
 impl<'a> Iterator for RawKeyLogIter<'a> {
-    type Item = &'a RawRecord;
+    type Item = &'a RawKRecord;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let vec = &self.logs.logs;
+        let vec = &self.logs.records;
+        let i = self.i;
         self.i += 1;
 
-        if self.i >= vec.len() {
+        if i >= vec.len() {
             return None;
         }
-        match vec.get((self.logs.ind + self.i) % vec.len()) {
-            Some(r) => {
-                if !r.h_dev.is_null() {
-                    Some(r)
-                } else {
-                    None
-                }
-            }
-            None => None,
-        }
+        return vec[(self.logs.ind + vec.len() - i) % vec.len()].as_ref();
     }
 }
 
@@ -118,8 +122,6 @@ impl<'a> Iterator for RawKeyLogIter<'a> {
 //         out
 //     }
 // }
-
-static mut GLOB_HWND: HWND = null_mut();
 
 fn main() {
     // let csv_parser = CsvParser::new();
@@ -173,6 +175,8 @@ fn main() {
 
     // println!("key_map: {:?}", key_map);
 
+    unsafe{ RAW_KEY_LOGS = RawKeyLogs::new(100); }
+
     let h_instance = unsafe { GetModuleHandleW(null_mut()) };
 
     let mut startup_info: STARTUPINFOW;
@@ -216,8 +220,6 @@ fn main() {
     )};
     if hwnd.is_null() { panic!("failed to create window"); }
 
-    unsafe{ GLOB_HWND = hwnd; }
-
     let rid_tlc = RAWINPUTDEVICE {
         usUsagePage: 1, // HID_USAGE_PAGE_GENERIC
         usUsage: 6, // HID_USAGE_GENERIC_KEYBOARD
@@ -242,27 +244,32 @@ fn main() {
     let set_hwnd: unsafe extern "system" fn (HWND) = unsafe { std::mem::transmute(p_set_hwnd) };
     unsafe { set_hwnd(hwnd); }
     
-    let p_hook_proc = unsafe { GetProcAddress(h_inst_lib, "test_msg_proc\0".as_ptr() as LPCSTR) };
-    if p_hook_proc.is_null() { panic!("couldn't retrieve get_msg_proc from dll") }
+    let p_hook_proc = unsafe { GetProcAddress(h_inst_lib, "key_hook_proc\0".as_ptr() as LPCSTR) };
+    if p_hook_proc.is_null() { panic!("couldn't retrieve key_hook_proc from dll") }
     let hook_proc: unsafe extern "system" fn (c_int, WPARAM, LPARAM) -> LRESULT = unsafe { std::mem::transmute(p_hook_proc) };
 
-    let msg_hook = unsafe { SetWindowsHookExW(WH_KEYBOARD, Some(hook_proc), h_inst_lib, 0) };
-    if msg_hook.is_null() {
-        print_last_win_error();
-        panic!("failed to set msg hook");
-    }
+    // let msg_hook = unsafe { SetWindowsHookExW(WH_KEYBOARD, Some(hook_proc), h_inst_lib, 0) };
+    // if msg_hook.is_null() {
+    //     print_last_win_error();
+    //     panic!("failed to set msg hook");
+    // }
 
     unsafe {
         let mut lp_msg: MSG = std::mem::zeroed();
         println!("Msg loop started");
         while GetMessageW(&mut lp_msg, 0 as HWND, 0, 0) > 0 {
+            println!("RAW_KEY_LOGS:");
+            for (i, r) in RAW_KEY_LOGS.iter().enumerate() {
+                if i > 10 { break; }
+                println!("{i}: {:?} - {} - {:?}", r.h_dev, r.v_k_code, r.k_dir);
+            }
             DispatchMessageW(&lp_msg);
         }
     }
 
     unsafe{
         // free other things ig
-        UnhookWindowsHookEx(msg_hook);
+        // UnhookWindowsHookEx(msg_hook);
         FreeLibrary(h_inst_lib); 
     }
 
@@ -282,7 +289,7 @@ fn main() {
 
 #[cfg(windows)]
 unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
-    use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY, WM_INPUT, RAWINPUT, GetRawInputData, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, RIM_TYPEKEYBOARD}, shared::{minwindef::LPVOID}};
+    use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY, WM_INPUT, GetRawInputData, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, RIM_TYPEKEYBOARD}, shared::{minwindef::LPVOID}};
 
     match i_message {
         WM_HOOKDID => {
@@ -307,7 +314,8 @@ unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM
             let raw: &RAWINPUT = &*(raw_data_buffer.as_ptr() as *const RAWINPUT);
 
             if raw.header.dwType == RIM_TYPEKEYBOARD {
-                dbg!(raw.data.keyboard().MakeCode);
+                // dbg!(raw.data.keyboard().MakeCode);
+                RAW_KEY_LOGS.push(RawKRecord::new(raw));
             }
 
             return 0;
