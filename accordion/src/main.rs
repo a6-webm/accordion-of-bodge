@@ -31,7 +31,7 @@ use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVE
 // mod lib;
 // use crate::lib::{Chord, KeyCode, MidiNote};
 
-const WM_HOOKDID: UINT = WM_USER + 300;
+const WM_SHOULDBLKKEY: UINT = WM_USER + 300;
 static mut RAW_KEY_LOGS: RawKeyLogs = RawKeyLogs {ind: 0, records: Vec::new()}; // should really switch to using shared memory lmao, christ
 
 #[derive(Debug, Clone)]
@@ -83,6 +83,10 @@ impl RawKeyLogs {
         self.ind += 1;
         self.ind %= self.records.len();
         self.records[self.ind] = Some(r);
+    }
+
+    fn dev_from_hook_msg() -> HANDLE {
+        todo!();
     }
 }
 
@@ -248,11 +252,11 @@ fn main() {
     if p_hook_proc.is_null() { panic!("couldn't retrieve key_hook_proc from dll") }
     let hook_proc: unsafe extern "system" fn (c_int, WPARAM, LPARAM) -> LRESULT = unsafe { std::mem::transmute(p_hook_proc) };
 
-    // let msg_hook = unsafe { SetWindowsHookExW(WH_KEYBOARD, Some(hook_proc), h_inst_lib, 0) };
-    // if msg_hook.is_null() {
-    //     print_last_win_error();
-    //     panic!("failed to set msg hook");
-    // }
+    let msg_hook = unsafe { SetWindowsHookExW(WH_KEYBOARD, Some(hook_proc), h_inst_lib, 0) };
+    if msg_hook.is_null() {
+        print_last_win_error();
+        panic!("failed to set msg hook");
+    }
 
     unsafe {
         let mut lp_msg: MSG = std::mem::zeroed();
@@ -263,13 +267,16 @@ fn main() {
                 if i > 10 { break; }
                 println!("{i}: {:?} - {} - {:?}", r.h_dev, r.v_k_code, r.k_dir);
             }
+            if lp_msg.message == WM_SHOULDBLKKEY {
+                println!("MsgHook called");
+            }
             DispatchMessageW(&lp_msg);
         }
     }
 
     unsafe{
         // free other things ig
-        // UnhookWindowsHookEx(msg_hook);
+        UnhookWindowsHookEx(msg_hook);
         FreeLibrary(h_inst_lib); 
     }
 
@@ -292,9 +299,9 @@ unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM
     use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY, WM_INPUT, GetRawInputData, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, RIM_TYPEKEYBOARD}, shared::{minwindef::LPVOID}};
 
     match i_message {
-        WM_HOOKDID => {
-            dbg!("MsgHook called");
-            return 0;
+        WM_SHOULDBLKKEY => {
+            return 1;
+            todo!();
         },
         WM_DESTROY => {
             dbg!(PostQuitMessage(0));
@@ -314,7 +321,6 @@ unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM
             let raw: &RAWINPUT = &*(raw_data_buffer.as_ptr() as *const RAWINPUT);
 
             if raw.header.dwType == RIM_TYPEKEYBOARD {
-                // dbg!(raw.data.keyboard().MakeCode);
                 RAW_KEY_LOGS.push(RawKRecord::new(raw));
             }
 
