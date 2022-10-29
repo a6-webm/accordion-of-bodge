@@ -5,17 +5,19 @@
 
 // parse CSV of notes/chords mapped to keyboard(||stradella bass system?)
 
+use std::collections::binary_heap::Iter;
 // use std::collections::HashMap;
 use std::ffi::{OsString};
 use std::mem::size_of;
 use std::os::windows::prelude::OsStringExt;
 use std::ptr::{null_mut};
+use std::time::Instant;
 // use std::str::FromStr;
 // use std::thread::sleep;
 // use std::time::Duration;
 // use std::{env, fs, thread};
 // use regex::Regex;
-use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM, HLOCAL, HINSTANCE};
+use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM, HLOCAL, HINSTANCE, USHORT};
 use winapi::ctypes::c_int;
 use winapi::shared::ntdef::{LPCSTR};
 use winapi::shared::windef::{HWND};
@@ -23,13 +25,77 @@ use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::libloaderapi::{GetModuleHandleW, LoadLibraryW, GetProcAddress, FreeLibrary};
 use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOW};
 use winapi::um::winbase::{FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_ALLOCATE_BUFFER, FORMAT_MESSAGE_IGNORE_INSERTS, LocalFree};
-use winapi::um::winnt::{MAKELANGID, LANG_NEUTRAL, SUBLANG_DEFAULT, LPWSTR};
+use winapi::um::winnt::{MAKELANGID, LANG_NEUTRAL, SUBLANG_DEFAULT, LPWSTR, HANDLE};
 use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, WS_VISIBLE, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, UnhookWindowsHookEx, WM_USER, WH_KEYBOARD};
 
 // mod lib;
 // use crate::lib::{Chord, KeyCode, MidiNote};
 
 const WM_HOOKDID: UINT = WM_USER + 300;
+
+#[derive(Debug, Clone)]
+enum KDir {
+    Up,
+    Down,
+}
+
+#[derive(Debug, Clone)]
+struct RawRecord {
+    k_dir: KDir,
+    h_dev: HANDLE,
+    v_k_code: USHORT,
+}
+
+struct RawKeyLogIter<'a> {
+    logs: &'a RawKeyLogs,
+    i: usize,
+}
+
+struct RawKeyLogs {
+    logs: Vec<RawRecord>,
+    ind: usize,
+}
+
+impl RawKeyLogs {
+    fn new(size: usize) -> Self {
+        let mut logs = Vec::with_capacity(size);
+        logs.fill(RawRecord { k_dir: KDir::Up, h_dev: null_mut(), v_k_code: 0 });
+        return RawKeyLogs { logs: Vec::new(), ind: 0 }
+    }
+
+    fn iter(&self) -> RawKeyLogIter {
+        RawKeyLogIter { logs: self, i: 0 }
+    }
+
+    fn push(&mut self, r: RawRecord) {
+        self.ind += 1;
+        self.ind %= self.logs.len();
+        self.logs[self.ind] = r;
+    }
+}
+
+impl<'a> Iterator for RawKeyLogIter<'a> {
+    type Item = &'a RawRecord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let vec = &self.logs.logs;
+        self.i += 1;
+
+        if self.i >= vec.len() {
+            return None;
+        }
+        match vec.get((self.logs.ind + self.i) % vec.len()) {
+            Some(r) => {
+                if !r.h_dev.is_null() {
+                    Some(r)
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    }
+}
 
 // struct CsvParser {
 //     regex: Regex,
