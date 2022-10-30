@@ -26,6 +26,7 @@ use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVE
 
 const WM_SHOULDBLKKEY: UINT = WM_USER + 300;
 static mut GLB: Globals = Globals {
+    verbose: false,
     raw_key_logs: null_mut(),
     key_map: null_mut(),
     dev_handles: null_mut(),
@@ -33,6 +34,7 @@ static mut GLB: Globals = Globals {
 
 
 struct Globals {
+    verbose: bool,
     raw_key_logs: *mut RawKeyLogs,
     key_map: *mut HashMap<(HANDLE, USHORT), Vec<MidiNote>>,
     dev_handles: *mut DevHandles,
@@ -116,16 +118,23 @@ impl<'a> Iterator for RawKeyLogIter<'a> {
     }
 }
 
+enum KillOverride {
+    None,
+    KillAll,
+    KillNone,
+}
+
 struct RawKeyLogs {
     records: Vec<Option<RawKRecord>>,
-    capturing_devs: Vec<HANDLE>,
+    bound_keys: Vec<(HANDLE, USHORT)>,
+    kill_override: KillOverride,
     ind: usize,
     h_wnd: HWND,
 }
 
 impl RawKeyLogs {
     fn new(size: usize, h_wnd: HWND) -> Self {
-        RawKeyLogs { records: vec![None; size], capturing_devs: Vec::new(), ind: size - 1, h_wnd }
+        RawKeyLogs { records: vec![None; size], bound_keys: Vec::new(), kill_override: KillOverride::KillAll, ind: size - 1, h_wnd }
     }
 
     fn iter(&self) -> RawKeyLogIter {
@@ -133,7 +142,7 @@ impl RawKeyLogs {
     }
 
     fn push(&mut self, r: RawKRecord) {
-        println!("RawInput: {:?} - {} - {:?}", r.h_dev, r.v_k_code, r.k_dir);
+        if unsafe {GLB.verbose} { println!("RawInput: {:?} - {} - {:?}", r.h_dev, r.v_k_code, r.k_dir); }
         self.ind += 1;
         self.ind %= self.records.len();
         self.records[self.ind] = Some(r);
@@ -142,27 +151,33 @@ impl RawKeyLogs {
     fn should_kill(&mut self, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
         const KILL: LRESULT = 1;
         const NO_KILL: LRESULT = 0;
-        if let Some(r) = self.rec_from_hook_msg(w_param, l_param) {
-            if self.capturing_devs.contains(&r.h_dev) {
-                return KILL;
-            }
+        match self.kill_override {
+            KillOverride::KillAll => return KILL,
+            KillOverride::KillNone => return NO_KILL,
+            KillOverride::None => {
+                if let Some(r) = self.rec_from_hook_msg(w_param, l_param) {
+                    if self.bound_keys.contains(&(r.h_dev, r.v_k_code)) {
+                        return KILL;
+                    }
+                }
+                return NO_KILL;
+            },
         }
-        return NO_KILL;
     }
 
     fn rec_from_hook_msg(&mut self, w_param: WPARAM, l_param: LPARAM) -> Option<RawKRecord> {
         if let Some(r) = self.rec_from_hook_msg_in_logs(self.records.len(), w_param, l_param) {
-            println!("Linked: {:?} - {} - {:?}", r.h_dev, r.v_k_code, r.k_dir);
+            if unsafe {GLB.verbose} { println!("Linked: {:?} - {} - {:?}", r.h_dev, r.v_k_code, r.k_dir); }
             return Some(r);
         }
-        print!("Input not found, peeking queue... ");
+        if unsafe {GLB.verbose} { print!("Input not found, peeking queue... "); }
         let new_msgs = self.process_waiting_msgs();
-        println!("Found {new_msgs} new msgs");
+        if unsafe {GLB.verbose} { println!("Found {new_msgs} new msgs"); }
         if let Some(r) = self.rec_from_hook_msg_in_logs(new_msgs, w_param, l_param) {
             println!("Linked after peek: {:?} - {} - {:?}", r.h_dev, r.v_k_code, r.k_dir);
             return Some(r);
         }
-        println!("Could not link input");
+        if unsafe {GLB.verbose} { println!("Could not link input"); }
         return None;
     }
 
@@ -199,15 +214,16 @@ impl RawKeyLogs {
         if rid_size == 0 { return None; } // not sure if this can happen, but microsoft docs do this
         let mut raw_data_buffer: Vec<u8> = Vec::with_capacity(rid_size.try_into().unwrap());
 
-        if rid_size != unsafe { GetRawInputData(
-            l_param as HRAWINPUT,
-            RID_INPUT,
-            raw_data_buffer.as_mut_ptr() as LPVOID,
-            &mut rid_size,
-            size_of::<RAWINPUTHEADER>() as UINT
-        ) } {
-            println!("GetRawInputData does not return correct size!");
+        unsafe {
+            if rid_size != GetRawInputData(
+                l_param as HRAWINPUT,
+                RID_INPUT,
+                raw_data_buffer.as_mut_ptr() as LPVOID,
+                &mut rid_size,
+                size_of::<RAWINPUTHEADER>() as UINT
+            ) && GLB.verbose { println!("GetRawInputData does not return correct size!"); }
         }
+        
 
         let raw: &RAWINPUT = unsafe { &*(raw_data_buffer.as_ptr() as *const RAWINPUT) };
 
@@ -245,11 +261,12 @@ impl CsvParser {
 fn main() {
     // ---------------------------------------------------------------------------------------------------------
     // Key map init vv------------------------------------------------------------------------------------------
+    unsafe { GLB.verbose = true; }
     let csv_parser = CsvParser::new();
     let args: Vec<String> = env::args().collect(); // TODO error if file does not end with .csv
     let mut key_aliases: HashMap<String, USHORT> = HashMap::new();
     let mut key_map: HashMap<(HANDLE, USHORT), Vec<MidiNote>> = HashMap::new();
-    unsafe { GLB.key_map = &mut key_map }
+    unsafe { GLB.key_map = &mut key_map; }
 
     // Populate key_aliases
     {
@@ -387,12 +404,12 @@ fn main() {
     // ---------------------------------------------------------------------------------------------------------
 
     let mut r = RawKeyLogs::new(100, hwnd);
-    r.capturing_devs.push(0x55f60697 as HANDLE);
     unsafe{ GLB.raw_key_logs = &mut r; }
 
     unsafe {
         let mut lp_msg: MSG = std::mem::zeroed();
         println!("Msg loop started");
+        println!("-------- Press any key to set device [0] --------");
         while GetMessageW(&mut lp_msg, 0 as HWND, 0, 0) > 0 {
             DispatchMessageW(&lp_msg);
         }
@@ -434,7 +451,19 @@ unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM
                 if !(*GLB.dev_handles).is_full() && r.k_dir == KDir::Down {
                     (*GLB.dev_handles).push_d(r.h_dev);
                     if (*GLB.dev_handles).is_full() {
-                        (*GLB.dev_handles).populate_devs(&mut *GLB.key_map)
+                        print!("Resolving device handles... ");
+                        (*GLB.dev_handles).populate_devs(&mut *GLB.key_map);
+                        for ((h, v_k), _) in (*GLB.key_map).iter() {
+                            (*GLB.raw_key_logs).bound_keys.push((h.to_owned(), v_k.to_owned()));
+                        }
+                        (*GLB.raw_key_logs).kill_override = KillOverride::None;
+                        println!("-------- All devices set! --------");
+                    } else {
+                        println!("-------- Press any key to set device [{}] --------", (*GLB.dev_handles).devs.len());
+                    }
+                } else if r.k_dir == KDir::Down {
+                    if let Some(c) = (*GLB.key_map).get(&(r.h_dev, r.v_k_code)) {
+                        if GLB.verbose { println!("Playing chord: {:?}", c); }
                     }
                 }
             }
