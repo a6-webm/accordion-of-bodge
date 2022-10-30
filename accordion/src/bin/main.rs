@@ -11,6 +11,7 @@ use std::mem::size_of;
 use std::os::windows::prelude::OsStringExt;
 use std::ptr::null_mut;
 use std::{env, fs};
+use accordion_of_bodge::{MidiNote, Chord};
 use regex::Regex;
 use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM, HLOCAL, HINSTANCE, USHORT, LPVOID};
 use winapi::ctypes::c_int;
@@ -22,9 +23,6 @@ use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOW};
 use winapi::um::winbase::{FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_ALLOCATE_BUFFER, FORMAT_MESSAGE_IGNORE_INSERTS, LocalFree};
 use winapi::um::winnt::{MAKELANGID, LANG_NEUTRAL, SUBLANG_DEFAULT, LPWSTR, HANDLE};
 use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, WS_VISIBLE, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, UnhookWindowsHookEx, WM_USER, WH_KEYBOARD, RAWINPUT, WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP, PeekMessageW, WM_INPUT, PM_REMOVE, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, GetRawInputData, RIM_TYPEKEYBOARD};
-
-mod lib;
-use crate::lib::{Chord, MidiNote};
 
 const WM_SHOULDBLKKEY: UINT = WM_USER + 300;
 static mut GLB: Globals = Globals {
