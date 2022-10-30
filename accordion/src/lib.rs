@@ -3,8 +3,6 @@
 use std::fmt::{Display, self};
 use std::num::ParseIntError;
 
-pub type KeyCode = String;
-
 #[derive(Debug, Clone)]
 pub enum ChordError {
     EmptyStr,
