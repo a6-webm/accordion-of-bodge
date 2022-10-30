@@ -21,15 +21,18 @@ pub unsafe extern "system" fn key_hook_proc(code: c_int, w_param: WPARAM, l_para
         dbg!("Hook: no action");
         return CallNextHookEx(null_mut(), code, w_param, l_param);
     }
+    const NO_KILL: LRESULT = 0;
+    const KILL: LRESULT = 1;
     let kill = SendMessageW(GLOB_HWND, WM_SHOULDBLKKEY, w_param, l_param);
     match kill {
-        0 => {
+        NO_KILL => {
             dbg!("Hook: no kill");
             return CallNextHookEx(null_mut(), code, w_param, l_param);
         },
-        _ => {
+        KILL => {
             dbg!("Hook: kill");
             return 1;
-        }
+        },
+        _ => unreachable!()
     }
 }
