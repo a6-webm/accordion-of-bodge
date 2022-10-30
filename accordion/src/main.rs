@@ -27,7 +27,50 @@ mod lib;
 use crate::lib::{Chord, MidiNote};
 
 const WM_SHOULDBLKKEY: UINT = WM_USER + 300;
-static mut RAW_KEY_LOGS: *mut RawKeyLogs = null_mut();
+static mut GLB: Globals = Globals {
+    raw_key_logs: null_mut(),
+    key_map: null_mut(),
+    dev_handles: null_mut(),
+};
+
+
+struct Globals {
+    raw_key_logs: *mut RawKeyLogs,
+    key_map: *mut HashMap<(HANDLE, USHORT), Vec<MidiNote>>,
+    dev_handles: *mut DevHandles,
+}
+
+struct DevHandles {
+    files: Vec<String>,
+    devs: Vec<HANDLE>,
+    amt: usize,
+}
+
+impl DevHandles {
+    fn new(amt: usize) -> Self {
+        DevHandles { devs: Vec::with_capacity(amt), files: Vec::with_capacity(amt), amt }
+    }
+
+    fn push_d(&mut self, dev: HANDLE) {
+        self.devs.push(dev);
+    }
+
+    fn push_f(&mut self, fl: String) {
+        self.files.push(fl);
+    }
+
+    fn populate_devs(&self, k_m: &mut HashMap<(HANDLE, USHORT), Vec<MidiNote>>) {
+        let old_k_m = k_m.to_owned();
+        k_m.clear();
+        for ((h, v_k), mn) in old_k_m {
+            k_m.insert((self.devs[h as usize], v_k), mn);
+        }
+    }
+
+    fn is_full(&self) -> bool {
+        self.devs.len() == self.amt
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 enum KDir {
@@ -140,7 +183,7 @@ impl RawKeyLogs {
         return None;
     }
 
-    fn process_waiting_msgs(&self) -> usize {
+    fn process_waiting_msgs(&mut self) -> usize {
         let mut count = 0;
         unsafe {
             let mut lp_msg: MSG = std::mem::zeroed();
@@ -152,10 +195,10 @@ impl RawKeyLogs {
         return count;
     }
 
-    fn process_raw(&self, l_param: LPARAM) {
+    fn process_raw(&mut self, l_param: LPARAM) -> Option<RawKRecord> {
         let mut rid_size: UINT = 0;
         unsafe { GetRawInputData(l_param as HRAWINPUT, RID_INPUT, null_mut(), &mut rid_size, size_of::<RAWINPUTHEADER>() as UINT); }
-        if rid_size == 0 { return; } // not sure if this can happen, but microsoft docs do this
+        if rid_size == 0 { return None; } // not sure if this can happen, but microsoft docs do this
         let mut raw_data_buffer: Vec<u8> = Vec::with_capacity(rid_size.try_into().unwrap());
 
         if rid_size != unsafe { GetRawInputData(
@@ -171,8 +214,11 @@ impl RawKeyLogs {
         let raw: &RAWINPUT = unsafe { &*(raw_data_buffer.as_ptr() as *const RAWINPUT) };
 
         if raw.header.dwType == RIM_TYPEKEYBOARD {
-            unsafe { (*RAW_KEY_LOGS).push(RawKRecord::new(raw)); }
+            let rr = RawKRecord::new(raw);
+            self.push(rr.to_owned());
+            return Some(rr);
         }
+        return None;
     }
 }
 
@@ -200,11 +246,12 @@ impl CsvParser {
 
 fn main() {
     // ---------------------------------------------------------------------------------------------------------
-    // Key to note map vv---------------------------------------------------------------------------------------
+    // Key map init vv------------------------------------------------------------------------------------------
     let csv_parser = CsvParser::new();
     let args: Vec<String> = env::args().collect(); // TODO error if file does not end with .csv
     let mut key_aliases: HashMap<String, USHORT> = HashMap::new();
     let mut key_map: HashMap<(HANDLE, USHORT), Vec<MidiNote>> = HashMap::new();
+    unsafe { GLB.key_map = &mut key_map }
 
     // Populate key_aliases
     {
@@ -223,8 +270,13 @@ fn main() {
     }
 
     // Populate key_map
-    if args.get(3) == None { panic!("Correct usage: ") } // TODO finish Correct usage
-    for (i, keymap_fp) in args.iter().skip(2).enumerate() {
+    let keymap_files: &[String] = &args[2..];
+    if keymap_files.is_empty() { panic!("Correct usage: ") } // TODO finish Correct usage
+    let mut dev_handles = DevHandles::new(keymap_files.len());
+    unsafe { GLB.dev_handles = &mut dev_handles}
+    for (i, keymap_fp) in keymap_files.iter().enumerate() {
+        unsafe { (*GLB.dev_handles).push_f(keymap_fp.to_owned()); }
+        
         let keymap_string = fs::read_to_string(keymap_fp).expect("Failed to read file: ");
         let keymap_csv = csv_parser.cells_as_vec(keymap_string.as_str());
         
@@ -249,7 +301,7 @@ fn main() {
     }
 
     println!("key_map: {:?}", key_map);
-    // Key to note map ^^---------------------------------------------------------------------------------------
+    // Key map init ^^------------------------------------------------------------------------------------------
     // ---------------------------------------------------------------------------------------------------------
 
     // ---------------------------------------------------------------------------------------------------------
@@ -338,7 +390,7 @@ fn main() {
 
     let mut r = RawKeyLogs::new(100, hwnd);
     r.capturing_devs.push(0x55f60697 as HANDLE);
-    unsafe{ RAW_KEY_LOGS = &mut r; }
+    unsafe{ GLB.raw_key_logs = &mut r; }
 
     unsafe {
         let mut lp_msg: MSG = std::mem::zeroed();
@@ -372,14 +424,22 @@ unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM
 
     match i_message {
         WM_SHOULDBLKKEY => {
-            return (*RAW_KEY_LOGS).should_kill(w_param, l_param);
+            return (*GLB.raw_key_logs).should_kill(w_param, l_param);
         },
         WM_DESTROY => {
             dbg!(PostQuitMessage(0));
             return 0;
         },
         WM_INPUT => {
-            (*RAW_KEY_LOGS).process_raw(l_param);
+            let o_r = (*GLB.raw_key_logs).process_raw(l_param);
+            if let Some(r) = o_r {
+                if !(*GLB.dev_handles).is_full() && r.k_dir == KDir::Down {
+                    (*GLB.dev_handles).push_d(r.h_dev);
+                    if (*GLB.dev_handles).is_full() {
+                        (*GLB.dev_handles).populate_devs(&mut *GLB.key_map)
+                    }
+                }
+            }
             return 0;
         },
         _ => DefWindowProcW(h_wnd, i_message, w_param, l_param),
