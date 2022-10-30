@@ -1,1 +1,16 @@
-`=Console
+esc=27, f1=112, f2=113, f3=114, f4=115, f5=116, f6=117, f7=118, f8=119, f9=120, f10=121, f11=122, f12=123,
+`=223, one=49, two=50, three=51, four=52, five=53, six=54, seven=55, eight=56, nine=57, zero=48, -=189, equals=187, backspace=8,
+tab=9, q=81, w=87, e=69, r=82, t=84, y=89, u=85, i=73, o=79, p=80, [=219, ]=221, enter=13,
+caps=20, a=65, s=83, d=68, f=70, g=71, h=72, j=74, k=75, l=76, ;=186, '=192, #=222,
+shift=16, \=220, z=90, x=88, c=67, v=86, b=66, n=78, m=77, comma=188, dot=190, /=191,
+ctrl=17, alt=18,
+
+print_screeen=44, scroll_lock=145, break=19,
+insert=45, home=36, pg_up=33,
+delete=46, end=35, pg_down=34,
+
+numlock=144, num/=111, num*=106, num-=109,
+num7=103, num8=104, num9=105, num+=107,
+num4=100, num5=101, num6=102,
+num1=97, num2=98, num3=99,
+num0=96, numdot=110
