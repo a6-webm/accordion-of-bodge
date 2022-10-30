@@ -253,6 +253,8 @@ fn main() {
 
     // println!("key_map: {:?}", key_map);
 
+    // ---------------------------------------------------------------------------------------------------------
+    // Windows init --------------------------------------------------------------------------------------------
     let h_instance = unsafe { GetModuleHandleW(null_mut()) };
 
     let mut startup_info: STARTUPINFOW;
@@ -296,10 +298,6 @@ fn main() {
     )};
     if hwnd.is_null() { panic!("failed to create window"); }
 
-    let mut r = RawKeyLogs::new(100, hwnd);
-    r.capturing_devs.push(0x55f60697 as HANDLE);
-    unsafe{ RAW_KEY_LOGS = &mut r; }
-
     let rid_tlc = RAWINPUTDEVICE {
         usUsagePage: 1, // HID_USAGE_PAGE_GENERIC
         usUsage: 6, // HID_USAGE_GENERIC_KEYBOARD
@@ -325,7 +323,10 @@ fn main() {
     unsafe { set_hwnd(hwnd); }
     
     let p_hook_proc = unsafe { GetProcAddress(h_inst_lib, "key_hook_proc\0".as_ptr() as LPCSTR) };
-    if p_hook_proc.is_null() { panic!("couldn't retrieve key_hook_proc from dll") }
+    if p_hook_proc.is_null() {
+        unsafe{ FreeLibrary(h_inst_lib); }
+        panic!("couldn't retrieve key_hook_proc from dll")
+    }
     let hook_proc: unsafe extern "system" fn (c_int, WPARAM, LPARAM) -> LRESULT = unsafe { std::mem::transmute(p_hook_proc) };
 
     let msg_hook = unsafe { SetWindowsHookExW(WH_KEYBOARD, Some(hook_proc), h_inst_lib, 0) };
@@ -333,6 +334,12 @@ fn main() {
         print_last_win_error();
         panic!("failed to set msg hook");
     }
+    // Windows init --------------------------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------------------------------------
+
+    let mut r = RawKeyLogs::new(100, hwnd);
+    r.capturing_devs.push(0x55f60697 as HANDLE);
+    unsafe{ RAW_KEY_LOGS = &mut r; }
 
     unsafe {
         let mut lp_msg: MSG = std::mem::zeroed();
