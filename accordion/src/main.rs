@@ -5,7 +5,6 @@
 
 // parse CSV of notes/chords mapped to keyboard(||stradella bass system?)
 
-use std::collections::HashMap;
 // use std::collections::HashMap;
 use std::ffi::{OsString};
 use std::mem::size_of;
@@ -32,7 +31,6 @@ use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVE
 
 const WM_SHOULDBLKKEY: UINT = WM_USER + 300;
 static mut RAW_KEY_LOGS: *mut RawKeyLogs = null_mut();
-static mut DEV_CAPTURE: *mut HashMap<HANDLE, bool> = null_mut();
 
 #[derive(Debug, Clone, PartialEq)]
 enum KDir {
@@ -97,19 +95,36 @@ impl RawKeyLogs {
     }
 
     fn push(&mut self, r: RawKRecord) {
+        println!("RawInput: {:?} - {} - {:?}", r.h_dev, r.v_k_code, r.k_dir);
         self.ind += 1;
         self.ind %= self.records.len();
         self.records[self.ind] = Some(r);
     }
 
+    fn should_kill(&mut self, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
+        const KILL: LRESULT = 1;
+        const NO_KILL: LRESULT = 0;
+        if let Some(r) = self.rec_from_hook_msg(w_param, l_param) {
+            if self.capturing_devs.contains(&r.h_dev) {
+                return KILL;
+            }
+        }
+        return NO_KILL;
+    }
+
     fn rec_from_hook_msg(&mut self, w_param: WPARAM, l_param: LPARAM) -> Option<RawKRecord> {
         if let Some(r) = self.rec_from_hook_msg_in_logs(self.records.len(), w_param, l_param) {
+            println!("Linked: {:?} - {} - {:?}", r.h_dev, r.v_k_code, r.k_dir);
             return Some(r);
         }
+        print!("Input not found, peeking queue... ");
         let new_msgs = self.process_waiting_msgs();
+        println!("Found {new_msgs} new msgs");
         if let Some(r) = self.rec_from_hook_msg_in_logs(new_msgs, w_param, l_param) {
+            println!("Linked after peek: {:?} - {} - {:?}", r.h_dev, r.v_k_code, r.k_dir);
             return Some(r);
         }
+        println!("Could not link input");
         return None;
     }
 
@@ -282,6 +297,7 @@ fn main() {
     if hwnd.is_null() { panic!("failed to create window"); }
 
     let mut r = RawKeyLogs::new(100, hwnd);
+    r.capturing_devs.push(0x55f60697 as HANDLE);
     unsafe{ RAW_KEY_LOGS = &mut r; }
 
     let rid_tlc = RAWINPUTDEVICE {
@@ -322,14 +338,6 @@ fn main() {
         let mut lp_msg: MSG = std::mem::zeroed();
         println!("Msg loop started");
         while GetMessageW(&mut lp_msg, 0 as HWND, 0, 0) > 0 {
-            println!("RAW_KEY_LOGS:");
-            for (i, r) in (*RAW_KEY_LOGS).iter().enumerate() {
-                if i > 10 { break; }
-                println!("{i}: {:?} - {} - {:?}", r.h_dev, r.v_k_code, r.k_dir);
-            }
-            if lp_msg.message == WM_SHOULDBLKKEY {
-                println!("MsgHook called");
-            }
             DispatchMessageW(&lp_msg);
         }
     }
@@ -355,21 +363,11 @@ fn main() {
 
 #[cfg(windows)]
 unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
-    use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY}, ctypes::c_void};
+    use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY}};
 
     match i_message {
         WM_SHOULDBLKKEY => {
-            const KILL: LRESULT = 1;
-            const NO_KILL: LRESULT = 0;
-            match (*RAW_KEY_LOGS).rec_from_hook_msg(w_param, l_param) {
-                Some(r) => {
-                    if r.h_dev == 0x55f60697 as *mut c_void {
-                        return KILL;
-                    }
-                    return NO_KILL;
-                },
-                None => return NO_KILL
-            }
+            return (*RAW_KEY_LOGS).should_kill(w_param, l_param);
         },
         WM_DESTROY => {
             dbg!(PostQuitMessage(0));
