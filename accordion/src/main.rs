@@ -5,20 +5,17 @@
 
 // parse CSV of notes/chords mapped to keyboard(||stradella bass system?)
 
-// use std::collections::HashMap;
-use std::ffi::{OsString};
+use std::collections::HashMap;
+use std::ffi::OsString;
 use std::mem::size_of;
 use std::os::windows::prelude::OsStringExt;
-use std::ptr::{null_mut};
-// use std::str::FromStr;
-// use std::thread::sleep;
-// use std::time::Duration;
-// use std::{env, fs, thread};
-// use regex::Regex;
+use std::ptr::null_mut;
+use std::{env, fs};
+use regex::Regex;
 use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM, HLOCAL, HINSTANCE, USHORT, LPVOID};
 use winapi::ctypes::c_int;
-use winapi::shared::ntdef::{LPCSTR};
-use winapi::shared::windef::{HWND};
+use winapi::shared::ntdef::LPCSTR;
+use winapi::shared::windef::HWND;
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::libloaderapi::{GetModuleHandleW, LoadLibraryW, GetProcAddress, FreeLibrary};
 use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOW};
@@ -26,8 +23,8 @@ use winapi::um::winbase::{FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MES
 use winapi::um::winnt::{MAKELANGID, LANG_NEUTRAL, SUBLANG_DEFAULT, LPWSTR, HANDLE};
 use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, WS_VISIBLE, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, UnhookWindowsHookEx, WM_USER, WH_KEYBOARD, RAWINPUT, WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP, PeekMessageW, WM_INPUT, PM_REMOVE, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, GetRawInputData, RIM_TYPEKEYBOARD};
 
-// mod lib;
-// use crate::lib::{Chord, KeyCode, MidiNote};
+mod lib;
+use crate::lib::{Chord, MidiNote};
 
 const WM_SHOULDBLKKEY: UINT = WM_USER + 300;
 static mut RAW_KEY_LOGS: *mut RawKeyLogs = null_mut();
@@ -179,79 +176,80 @@ impl RawKeyLogs {
     }
 }
 
-// struct CsvParser {
-//     regex: Regex,
-// }
+struct CsvParser {
+    regex: Regex,
+}
 
-// impl CsvParser {
-//     fn new() -> CsvParser {
-//         CsvParser {
-//             regex: Regex::new(r#"(?:(?:"(.*?)")|(.*?))(?:(?:,\r?\n)|,|(?:\r?\n)|$)"#).unwrap(),
-//         }
-//     }
+impl CsvParser {
+    fn new() -> CsvParser {
+        CsvParser {
+            regex: Regex::new(r#"(?:(?:"(.*?)")|(.*?))(?:(?:,\r?\n)|,|(?:\r?\n)|$)"#).unwrap(),
+        }
+    }
 
-//     fn cells_as_vec(&self, s: &str) -> Vec<String>{
-//         let mut out: Vec<String> = Vec::new();
-//         for caps in self.regex.captures_iter(s) {
-//             for m in caps.iter().skip(1).flatten() {
-//                 out.push(m.as_str().to_owned());
-//             }
-//         }
-//         out
-//     }
-// }
+    fn cells_as_vec(&self, s: &str) -> Vec<String>{
+        let mut out: Vec<String> = Vec::new();
+        for caps in self.regex.captures_iter(s) {
+            for m in caps.iter().skip(1).flatten() {
+                out.push(m.as_str().to_owned());
+            }
+        }
+        out
+    }
+}
 
 fn main() {
-    // let csv_parser = CsvParser::new();
-    // let args: Vec<String> = env::args().collect(); // TODO error if file does not end with .csv
+    // ---------------------------------------------------------------------------------------------------------
+    // Key to note map vv---------------------------------------------------------------------------------------
+    let csv_parser = CsvParser::new();
+    let args: Vec<String> = env::args().collect(); // TODO error if file does not end with .csv
 
-    // let keymap_fp = args.get(1).expect("Correct usage: "); //TODO add correct usage text
-    // let key_aliases_fp = args.get(2).expect("Correct usage: "); //TODO allow ommission of 2nd parameter
+    let key_aliases_fp = args.get(1).expect("Correct usage: "); //TODO allow ommission of this parameter
+    let key_aliases_string = fs::read_to_string(key_aliases_fp).expect("Failed to read file: ");
+    let keyaliases_csv = csv_parser.cells_as_vec(key_aliases_string.as_str());
 
-    // let keymap_string = fs::read_to_string(keymap_fp).expect("Failed to read file: ");
-    // let key_aliases_string = fs::read_to_string(key_aliases_fp).expect("Failed to read file: ");
+    let mut key_aliases: HashMap<String, USHORT> = HashMap::new();
+    let mut key_map: HashMap<(HANDLE, USHORT), Vec<MidiNote>> = HashMap::new();
 
-    // let keymap_csv = csv_parser.cells_as_vec(keymap_string.as_str());
-    // let keyaliases_csv = csv_parser.cells_as_vec(key_aliases_string.as_str());
+    // Populate key_aliases
+    for s in keyaliases_csv.iter() {
+        if s.trim().is_empty() { // Ignore strings of whitespace
+            continue;
+        }
+        let mut iter = s.splitn(2, '=');
+        let alias = iter.next().expect("Missing alias and key data in alias CSV file").trim();
+        let gp_key: USHORT = iter.next().expect("Missing alias or key data in alias CSV file").trim().parse().expect("Wrong syntax in alias CSV file");
+        key_aliases.insert(alias.to_owned(), gp_key.to_owned());
+    }
 
-    // let mut key_aliases: HashMap<String, KeyCode> = HashMap::new();
-    // let mut key_map: HashMap<KeyCode, Vec<MidiNote>> = HashMap::new();
+    for (i, keymap_fp) in args.iter().skip(2).enumerate() {
+        let keymap_string = fs::read_to_string(keymap_fp).expect("Failed to read file: ");
+        let keymap_csv = csv_parser.cells_as_vec(keymap_string.as_str());
 
-    // // Populate key_aliases
-    // for s in keyaliases_csv.iter() {
-    //     if s.trim().is_empty() { // Ignore strings of whitespace
-    //         continue;
-    //     }
-    //     let mut iter = s.splitn(2, '=');
-    //     let alias = iter.next().expect("Missing alias and key data in alias CSV file").trim();
-    //     let gp_key = iter.next().expect("Missing alias or key data in alias CSV file").trim();
-    //     key_aliases.insert(alias.to_owned(), gp_key.to_owned());
-    // }
+        // Populate key_map
+        for s in keymap_csv.iter() {
+            if s.trim().is_empty() { // Ignore strings of whitespace
+                continue;
+            }
+            let mut iter = s.splitn(3, |c| c == '=' || c == '.');
+            let chord_str = iter.next().expect("Wrong syntax in keymap CSV file").trim();
+            let alias = iter.next().expect("Wrong syntax in keymap CSV file").trim();
+            let vel: u8 = iter.next().expect("Wrong syntax in keymap CSV file").trim()
+                .parse().expect("Wrong syntax in keymap CSV file"); // TODO More descriptive error messages?
+            
+            let chord = Chord::new(chord_str).expect("Wrong syntax in keymap CSV file")
+                .to_midi_chord(vel).expect("Error creating chord");
+            let key: USHORT = match key_aliases.get(alias) {
+                Some(s) => *s,
+                None => alias.parse().expect("alias not in aliases.csv and not a number\neither add to aliases.csv or use a correctly formatted number"),
+            };
+            key_map.insert((i as HANDLE, key.to_owned()), chord);
+        }
+    }
 
-    // // Populate key_map
-    // for s in keymap_csv.iter() {
-    //     if s.trim().is_empty() { // Ignore strings of whitespace
-    //         continue;
-    //     }
-    //     let mut iter = s.splitn(3, |c| c == '=' || c == '.');
-    //     let chord_str = iter.next().expect("Wrong syntax in keymap CSV file").trim();
-    //     let alias = iter.next().expect("Wrong syntax in keymap CSV file").trim();
-    //     let vel: u8 = iter.next().expect("Wrong syntax in keymap CSV file").trim()
-    //         .parse().expect("Wrong syntax in keymap CSV file");
-        
-    //     let chord = Chord::new(chord_str).expect("Wrong syntax in keymap CSV file")
-    //         .to_midi_chord(vel).expect("Error creating chord");
-    //     let key = match key_aliases.get(alias) {
-    //         Some(s) => s,
-    //         None => {
-    //             println!("\"{}\" not in aliases.csv. Using alias, but it may not be a valid GlovePIE key", alias);
-    //             alias
-    //         },
-    //     };
-    //     key_map.insert(key.to_owned(), chord);
-    // }
-
-    // println!("key_map: {:?}", key_map);
+    println!("key_map: {:?}", key_map);
+    // Key to note map ^^---------------------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------------------------------------
 
     // ---------------------------------------------------------------------------------------------------------
     // Windows init vv------------------------------------------------------------------------------------------
