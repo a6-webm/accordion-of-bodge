@@ -409,7 +409,7 @@ fn main() {
     unsafe {
         let mut lp_msg: MSG = std::mem::zeroed();
         println!("Msg loop started");
-        println!("-------- Press any key to set device [0] --------");
+        println!("-------- Press any key to set device [0], to be assigned mappings from {} --------", (*GLB.dev_handles).files[0]);
         while GetMessageW(&mut lp_msg, 0 as HWND, 0, 0) > 0 {
             DispatchMessageW(&lp_msg);
         }
@@ -459,7 +459,8 @@ unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM
                         (*GLB.raw_key_logs).kill_override = KillOverride::None;
                         println!("-------- All devices set! --------");
                     } else {
-                        println!("-------- Press any key to set device [{}] --------", (*GLB.dev_handles).devs.len());
+                        let len = (*GLB.dev_handles).devs.len();
+                        println!("-------- Press any key to set device [{}], to be assigned mappings from {} --------", len, (*GLB.dev_handles).files[len]);
                     }
                 } else if r.k_dir == KDir::Down {
                     if let Some(c) = (*GLB.key_map).get(&(r.h_dev, r.v_k_code)) {
