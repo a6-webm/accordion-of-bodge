@@ -11,14 +11,13 @@ static mut GLOB_HWND: HWND = null_mut();
 #[no_mangle]
 pub unsafe extern "system" fn set_hwnd(hwnd: HWND) {
     GLOB_HWND = hwnd;
-    dbg!(("hook dll set window: ", GLOB_HWND));
+    dbg!("hook dll set window: ", GLOB_HWND);
 }
 
 #[no_mangle]
 pub unsafe extern "system" fn key_hook_proc(code: c_int, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     use winapi::um::winuser::{CallNextHookEx};
     if code < 0 || code != HC_ACTION { // normal hooks process when code == HC_ACTION, but we want to intercept any messages we see
-        dbg!("Hook: no action");
         return CallNextHookEx(null_mut(), code, w_param, l_param);
     }
     const NO_KILL: LRESULT = 0;
@@ -26,11 +25,9 @@ pub unsafe extern "system" fn key_hook_proc(code: c_int, w_param: WPARAM, l_para
     let kill = SendMessageW(GLOB_HWND, WM_SHOULDBLKKEY, w_param, l_param);
     match kill {
         NO_KILL => {
-            dbg!("Hook: no kill");
             return CallNextHookEx(null_mut(), code, w_param, l_param);
         },
         KILL => {
-            dbg!("Hook: kill");
             return 1;
         },
         _ => unreachable!()
