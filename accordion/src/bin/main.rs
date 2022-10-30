@@ -25,6 +25,8 @@ use winapi::um::winnt::{MAKELANGID, LANG_NEUTRAL, SUBLANG_DEFAULT, LPWSTR, HANDL
 use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, WS_VISIBLE, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, UnhookWindowsHookEx, WM_USER, WH_KEYBOARD, RAWINPUT, WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP, PeekMessageW, WM_INPUT, PM_REMOVE, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, GetRawInputData, RIM_TYPEKEYBOARD};
 
 const WM_SHOULDBLKKEY: UINT = WM_USER + 300;
+type KeyMap = HashMap<(HANDLE, USHORT), Option<Vec<MidiNote>>>;
+
 static mut GLB: Globals = Globals {
     verbose: false,
     raw_key_logs: null_mut(),
@@ -36,7 +38,7 @@ static mut GLB: Globals = Globals {
 struct Globals {
     verbose: bool,
     raw_key_logs: *mut RawKeyLogs,
-    key_map: *mut HashMap<(HANDLE, USHORT), Vec<MidiNote>>,
+    key_map: *mut KeyMap,
     dev_handles: *mut DevHandles,
 }
 
@@ -59,7 +61,7 @@ impl DevHandles {
         self.files.push(fl);
     }
 
-    fn populate_devs(&self, k_m: &mut HashMap<(HANDLE, USHORT), Vec<MidiNote>>) {
+    fn populate_devs(&self, k_m: &mut KeyMap) {
         let old_k_m = k_m.to_owned();
         k_m.clear();
         for ((h, v_k), mn) in old_k_m {
@@ -118,23 +120,32 @@ impl<'a> Iterator for RawKeyLogIter<'a> {
     }
 }
 
-enum KillOverride {
+#[derive(PartialEq)]
+enum Override {
     None,
     KillAll,
-    KillNone,
+    ProcessNone,
 }
 
 struct RawKeyLogs {
     records: Vec<Option<RawKRecord>>,
     bound_keys: Vec<(HANDLE, USHORT)>,
-    kill_override: KillOverride,
+    toggle_keys: Vec<(HANDLE, USHORT)>,
+    kill_override: Override,
     ind: usize,
     h_wnd: HWND,
 }
 
 impl RawKeyLogs {
     fn new(size: usize, h_wnd: HWND) -> Self {
-        RawKeyLogs { records: vec![None; size], bound_keys: Vec::new(), kill_override: KillOverride::KillAll, ind: size - 1, h_wnd }
+        RawKeyLogs {
+            records: vec![None; size],
+            bound_keys: Vec::new(),
+            toggle_keys: Vec::new(),
+            kill_override: Override::KillAll,
+            ind: size - 1,
+            h_wnd,
+        }
     }
 
     fn iter(&self) -> RawKeyLogIter {
@@ -151,11 +162,17 @@ impl RawKeyLogs {
     fn should_kill(&mut self, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
         const KILL: LRESULT = 1;
         const NO_KILL: LRESULT = 0;
+        let o_r = self.rec_from_hook_msg(w_param, l_param);
+        if let Some(r) = o_r.as_ref() {
+            if self.toggle_keys.contains(&(r.h_dev, r.v_k_code)) {
+                return KILL;
+            }
+        }
         match self.kill_override {
-            KillOverride::KillAll => return KILL,
-            KillOverride::KillNone => return NO_KILL,
-            KillOverride::None => {
-                if let Some(r) = self.rec_from_hook_msg(w_param, l_param) {
+            Override::KillAll => return KILL,
+            Override::ProcessNone => return NO_KILL,
+            Override::None => {
+                if let Some(r) = o_r {
                     if self.bound_keys.contains(&(r.h_dev, r.v_k_code)) {
                         return KILL;
                     }
@@ -265,7 +282,7 @@ fn main() {
     let csv_parser = CsvParser::new();
     let args: Vec<String> = env::args().collect(); // TODO error if file does not end with .csv
     let mut key_aliases: HashMap<String, USHORT> = HashMap::new();
-    let mut key_map: HashMap<(HANDLE, USHORT), Vec<MidiNote>> = HashMap::new();
+    let mut key_map: KeyMap = HashMap::new();
     unsafe { GLB.key_map = &mut key_map; }
 
     // Populate key_aliases
@@ -302,16 +319,19 @@ fn main() {
             let mut iter = s.splitn(3, |c| c == '=' || c == '.');
             let chord_str = iter.next().expect("Wrong syntax in keymap CSV file").trim();
             let alias = iter.next().expect("Wrong syntax in keymap CSV file").trim();
-            let vel: u8 = iter.next().expect("Wrong syntax in keymap CSV file").trim()
-                .parse().expect("Wrong syntax in keymap CSV file"); // TODO More descriptive error messages?
-            
-            let chord = Chord::new(chord_str).expect("Wrong syntax in keymap CSV file")
-                .to_midi_chord(vel).expect("Error creating chord");
             let key: USHORT = match key_aliases.get(alias) {
                 Some(s) => *s,
                 None => alias.parse().expect("alias not in aliases.csv and not a number\neither add to aliases.csv or use a correctly formatted number"),
             };
-            key_map.insert((i as HANDLE, key.to_owned()), chord);
+            if chord_str == "TOGGLE" {
+                key_map.insert((i as HANDLE, key.to_owned()), None);
+                break;
+            }
+            let vel: u8 = iter.next().expect("Wrong syntax in keymap CSV file").trim()
+                .parse().expect("Wrong syntax in keymap CSV file"); // TODO More descriptive error messages?
+            let chord = Chord::new(chord_str).expect("Wrong syntax in keymap CSV file")
+                .to_midi_chord(vel).expect("Error creating chord");
+            key_map.insert((i as HANDLE, key.to_owned()), Some(chord));
         }
     }
 
@@ -451,20 +471,43 @@ unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM
                 if !(*GLB.dev_handles).is_full() && r.k_dir == KDir::Down {
                     (*GLB.dev_handles).push_d(r.h_dev);
                     if (*GLB.dev_handles).is_full() {
-                        print!("Resolving device handles... ");
+                        println!("Resolving device handles...");
                         (*GLB.dev_handles).populate_devs(&mut *GLB.key_map);
                         for ((h, v_k), _) in (*GLB.key_map).iter() {
                             (*GLB.raw_key_logs).bound_keys.push((h.to_owned(), v_k.to_owned()));
                         }
-                        (*GLB.raw_key_logs).kill_override = KillOverride::None;
+                        for ((h, v_k), c) in &*GLB.key_map {
+                            if c.is_none() {
+                                (*GLB.raw_key_logs).toggle_keys.push((h.to_owned(), v_k.to_owned()));
+                            }
+                        }
+                        (*GLB.raw_key_logs).kill_override = Override::None;
                         println!("-------- All devices set! --------");
                     } else {
                         let len = (*GLB.dev_handles).devs.len();
                         println!("-------- Press any key to set device [{}], to be assigned mappings from {} --------", len, (*GLB.dev_handles).files[len]);
                     }
                 } else if r.k_dir == KDir::Down {
-                    if let Some(c) = (*GLB.key_map).get(&(r.h_dev, r.v_k_code)) {
-                        if GLB.verbose { println!("Playing chord: {:?}", c); }
+                    if let Some(o_c) = (*GLB.key_map).get(&(r.h_dev, r.v_k_code)) {
+                        match o_c {
+                            Some(c) => {
+                                if (*GLB.raw_key_logs).kill_override == Override::None && GLB.verbose { println!("Playing chord: {:?}", c); }
+                            },
+                            None => {
+                                (*GLB.raw_key_logs).kill_override = 
+                                match (*GLB.raw_key_logs).kill_override {
+                                    Override::None => {
+                                        if GLB.verbose { println!("Processing off"); }
+                                        Override::ProcessNone
+                                    },
+                                    Override::ProcessNone => {
+                                        if GLB.verbose { println!("Processing on"); }
+                                        Override::None
+                                    },
+                                    Override::KillAll => unreachable!("Override == KillAll after device init"),
+                                };
+                            }
+                        }
                     }
                 }
             }
