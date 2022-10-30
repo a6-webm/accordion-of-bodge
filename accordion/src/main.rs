@@ -203,30 +203,31 @@ fn main() {
     // Key to note map vv---------------------------------------------------------------------------------------
     let csv_parser = CsvParser::new();
     let args: Vec<String> = env::args().collect(); // TODO error if file does not end with .csv
-
-    let key_aliases_fp = args.get(1).expect("Correct usage: "); //TODO allow ommission of this parameter
-    let key_aliases_string = fs::read_to_string(key_aliases_fp).expect("Failed to read file: ");
-    let keyaliases_csv = csv_parser.cells_as_vec(key_aliases_string.as_str());
-
     let mut key_aliases: HashMap<String, USHORT> = HashMap::new();
     let mut key_map: HashMap<(HANDLE, USHORT), Vec<MidiNote>> = HashMap::new();
 
     // Populate key_aliases
-    for s in keyaliases_csv.iter() {
-        if s.trim().is_empty() { // Ignore strings of whitespace
-            continue;
+    {
+        let key_aliases_fp = args.get(1).expect("Correct usage: "); //TODO allow ommission of this parameter // TODO finish Correct usage
+        let key_aliases_string = fs::read_to_string(key_aliases_fp).expect("Failed to read file: ");
+        let keyaliases_csv = csv_parser.cells_as_vec(key_aliases_string.as_str());
+        for s in keyaliases_csv.iter() {
+            if s.trim().is_empty() { // Ignore strings of whitespace
+                continue;
+            }
+            let mut iter = s.splitn(2, '=');
+            let alias = iter.next().expect("Missing alias and key data in alias CSV file").trim();
+            let gp_key: USHORT = iter.next().expect("Missing alias or key data in alias CSV file").trim().parse().expect("Wrong syntax in alias CSV file");
+            key_aliases.insert(alias.to_owned(), gp_key.to_owned());
         }
-        let mut iter = s.splitn(2, '=');
-        let alias = iter.next().expect("Missing alias and key data in alias CSV file").trim();
-        let gp_key: USHORT = iter.next().expect("Missing alias or key data in alias CSV file").trim().parse().expect("Wrong syntax in alias CSV file");
-        key_aliases.insert(alias.to_owned(), gp_key.to_owned());
     }
 
+    // Populate key_map
+    if args.get(3) == None { panic!("Correct usage: ") } // TODO finish Correct usage
     for (i, keymap_fp) in args.iter().skip(2).enumerate() {
         let keymap_string = fs::read_to_string(keymap_fp).expect("Failed to read file: ");
         let keymap_csv = csv_parser.cells_as_vec(keymap_string.as_str());
-
-        // Populate key_map
+        
         for s in keymap_csv.iter() {
             if s.trim().is_empty() { // Ignore strings of whitespace
                 continue;
