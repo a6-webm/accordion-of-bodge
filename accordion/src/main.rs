@@ -254,7 +254,7 @@ fn main() {
     // println!("key_map: {:?}", key_map);
 
     // ---------------------------------------------------------------------------------------------------------
-    // Windows init --------------------------------------------------------------------------------------------
+    // Windows init vv------------------------------------------------------------------------------------------
     let h_instance = unsafe { GetModuleHandleW(null_mut()) };
 
     let mut startup_info: STARTUPINFOW;
@@ -334,7 +334,7 @@ fn main() {
         print_last_win_error();
         panic!("failed to set msg hook");
     }
-    // Windows init --------------------------------------------------------------------------------------------
+    // Windows init ^^------------------------------------------------------------------------------------------
     // ---------------------------------------------------------------------------------------------------------
 
     let mut r = RawKeyLogs::new(100, hwnd);
@@ -368,7 +368,6 @@ fn main() {
     }
 }
 
-#[cfg(windows)]
 unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY}};
 
@@ -388,9 +387,7 @@ unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM
     }
 }
 
-#[cfg(windows)]
 fn win32_string( value : &str ) -> Vec<u16> {
     use std::{ffi::OsStr, os::windows::prelude::OsStrExt, iter::once};
-
     OsStr::new( value ).encode_wide().chain( once( 0 ) ).collect()
 }
