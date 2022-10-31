@@ -86,6 +86,11 @@ impl Chord {
                 let has_over = s.find('/') != None;
                 let mut iter = s.splitn(2, '/');
                 let chord = match iter.next() { Some(ch) => ch, None => return Err(ChordError::MissingNotes), };
+                if let Ok(n) = Note::new(chord) {
+                    if !has_over {
+                        return Ok(Chord::Custom(vec![n]));
+                    }
+                }
                 let over = match (iter.next(), has_over) {
                     (Some(ss), true) => Some(Note::new(ss).map_err(|e| ChordError::InvNote(e, s.to_owned()))?),
                     (_, false) => None,
