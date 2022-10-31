@@ -1,19 +1,7 @@
-add midi crate to output midi notes into a virtual midi device
- - redo midi representation?
-
-is rawinput going to send key repeat messages?
-
-include functionality to map any number of CSV file maps to any number of plugged in keyboards
-
-no GUI
+GUI?
 
 notification area icon?
 
-shamelessly learn the correct implementation of what ur trying to do from LuaMacros,
-  - Shared memory instead of global vars
-  - Some KeyLog structure that records past rawinput inputs
-    - do we want to detect altgr? (eh)
-  - A keyboard hook that polls the KeyLog if the input matches something previous or if it should wait until the rawinput comes through
-    - it uses this poll to decide whether to capture the input
+optimise code to fix latency
 
-very real chance that I need to go back and free lots of data from all my windows function calls (look at example code to figure this out)
+ffi with RtMidi for personal virtual midi port?
