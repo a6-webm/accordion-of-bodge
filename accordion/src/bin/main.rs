@@ -6,12 +6,15 @@
 // parse CSV of notes/chords mapped to keyboard(||stradella bass system?)
 
 use std::collections::HashMap;
+use std::error::Error;
 use std::ffi::OsString;
+use std::io::{stdout, stdin, Write};
 use std::mem::size_of;
 use std::os::windows::prelude::OsStringExt;
 use std::ptr::null_mut;
 use std::{env, fs};
 use accordion_of_bodge::{MidiNote, Chord};
+use midir::{MidiOutputConnection, MidiOutput, MidiOutputPort};
 use regex::Regex;
 use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM, HLOCAL, HINSTANCE, USHORT, LPVOID};
 use winapi::ctypes::c_int;
@@ -32,14 +35,85 @@ static mut GLB: Globals = Globals {
     raw_key_logs: null_mut(),
     key_map: null_mut(),
     dev_handles: null_mut(),
+    midi_handler: null_mut(),
 };
-
 
 struct Globals {
     verbose: bool,
     raw_key_logs: *mut RawKeyLogs,
     key_map: *mut KeyMap,
     dev_handles: *mut DevHandles,
+    midi_handler: *mut MidiHandler,
+}
+
+struct MidiHandler {
+    note_states: Vec<u8>,
+    key_states: HashMap<(HANDLE, USHORT), KDir>,
+    conn_out: MidiOutputConnection,
+}
+
+impl MidiHandler {
+    fn new() -> Result<Self, Box<dyn Error>> {
+        let midi_out = MidiOutput::new("Accordion_of_Bodge_midi_out")?;
+        let out_ports = midi_out.ports();
+        let out_port: &MidiOutputPort = match out_ports.len() {
+            0 => return Err("no output port found".into()),
+            1 => {
+                println!("Choosing the only available output port: {}", midi_out.port_name(&out_ports[0]).unwrap());
+                &out_ports[0]
+            },
+            _ => {
+                println!("\nAvailable output ports:");
+                for (i, p) in out_ports.iter().enumerate() {
+                    println!("{}: {}", i, midi_out.port_name(p).unwrap());
+                }
+                print!("Please select output port: ");
+                stdout().flush()?;
+                let mut input = String::new();
+                stdin().read_line(&mut input)?;
+                out_ports.get(input.trim().parse::<usize>()?)
+                         .ok_or("invalid output port selected")?
+            }
+        };
+        println!("\nOpening connection");
+        let conn_out = midi_out.connect(out_port, "midir-test")?;
+        println!("Connection open. Listen!");
+        return Ok(MidiHandler { note_states: vec!(0; 256), key_states: HashMap::new(), conn_out });
+    }
+
+    fn insert_key(&mut self, key: (HANDLE, USHORT)) {
+        self.key_states.insert(key, KDir::Up);
+    }
+
+    fn process_msg(&mut self, r: RawKRecord, notes: &Vec<MidiNote>) {
+        const NOTE_ON_MSG: u8 = 0x90;
+        const NOTE_OFF_MSG: u8 = 0x80;
+        if *self.key_states.get(&(r.h_dev, r.v_k_code)).unwrap() == r.k_dir {
+            return; // return if key hasn't changed state
+        }
+        self.key_states.insert((r.h_dev, r.v_k_code), r.k_dir.to_owned());
+        
+        for mn in notes {
+            match r.k_dir {
+                KDir::Up => {
+                    if self.note_states[mn.n as usize] > 0 {
+                        self.note_states[mn.n as usize] -= 1;
+                    }
+                    if self.note_states[mn.n as usize] == 0 {
+                        if unsafe {GLB.verbose} { println!("note: {} off", mn.n); }
+                        let _ = self.conn_out.send(&[NOTE_OFF_MSG, mn.n, mn.vel]);
+                    }
+                },
+                KDir::Down => {
+                    if self.note_states[mn.n as usize] == 0 {
+                        if unsafe {GLB.verbose} { println!("note: {} on", mn.n); }
+                        let _ = self.conn_out.send(&[NOTE_ON_MSG, mn.n, mn.vel]);
+                    }
+                    self.note_states[mn.n as usize] += 1;
+                },
+            }
+        }
+    }
 }
 
 struct DevHandles {
@@ -276,11 +350,14 @@ impl CsvParser {
 }
 
 fn main() {
-    // ---------------------------------------------------------------------------------------------------------
-    // Key map init vv------------------------------------------------------------------------------------------
     unsafe { GLB.verbose = true; }
+    let mut midi_handler = MidiHandler::new().expect("error creating MidiHandler");
+    unsafe{ GLB.midi_handler = &mut midi_handler; }
     let csv_parser = CsvParser::new();
     let args: Vec<String> = env::args().collect(); // TODO error if file does not end with .csv
+
+    // ---------------------------------------------------------------------------------------------------------
+    // Key map init vv------------------------------------------------------------------------------------------
     let mut key_aliases: HashMap<String, USHORT> = HashMap::new();
     let mut key_map: KeyMap = HashMap::new();
     unsafe { GLB.key_map = &mut key_map; }
@@ -423,8 +500,8 @@ fn main() {
     // Windows init ^^------------------------------------------------------------------------------------------
     // ---------------------------------------------------------------------------------------------------------
 
-    let mut r = RawKeyLogs::new(100, hwnd);
-    unsafe{ GLB.raw_key_logs = &mut r; }
+    let mut raw_key_logs = RawKeyLogs::new(100, hwnd);
+    unsafe{ GLB.raw_key_logs = &mut raw_key_logs; }
 
     unsafe {
         let mut lp_msg: MSG = std::mem::zeroed();
@@ -468,32 +545,38 @@ unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM
         WM_INPUT => {
             let o_r = (*GLB.raw_key_logs).process_raw(l_param);
             if let Some(r) = o_r {
-                if !(*GLB.dev_handles).is_full() && r.k_dir == KDir::Down {
-                    (*GLB.dev_handles).push_d(r.h_dev);
-                    if (*GLB.dev_handles).is_full() {
-                        println!("Resolving device handles...");
-                        (*GLB.dev_handles).populate_devs(&mut *GLB.key_map);
-                        for ((h, v_k), _) in (*GLB.key_map).iter() {
-                            (*GLB.raw_key_logs).bound_keys.push((h.to_owned(), v_k.to_owned()));
-                        }
-                        for ((h, v_k), c) in &*GLB.key_map {
-                            if c.is_none() {
-                                (*GLB.raw_key_logs).toggle_keys.push((h.to_owned(), v_k.to_owned()));
+                if !(*GLB.dev_handles).is_full() {
+                    if r.k_dir == KDir::Down {
+                        (*GLB.dev_handles).push_d(r.h_dev);
+                        if (*GLB.dev_handles).is_full() {
+                            println!("Resolving device handles...");
+                            (*GLB.dev_handles).populate_devs(&mut *GLB.key_map);
+                            for ((h, v_k), c) in &*GLB.key_map {
+                                if c.is_none() {
+                                    (*GLB.raw_key_logs).toggle_keys.push((h.to_owned(), v_k.to_owned()));
+                                }
+                                (*GLB.raw_key_logs).bound_keys.push((h.to_owned(), v_k.to_owned()));
+                                (*GLB.midi_handler).insert_key((h.to_owned(), v_k.to_owned()))
                             }
+                            (*GLB.raw_key_logs).kill_override = Override::None;
+                            println!("-------- All devices set! --------");
+                        } else {
+                            let len = (*GLB.dev_handles).devs.len();
+                            println!("-------- Press any key to set device [{}], to be assigned mappings from {} --------", len, (*GLB.dev_handles).files[len]);
                         }
-                        (*GLB.raw_key_logs).kill_override = Override::None;
-                        println!("-------- All devices set! --------");
-                    } else {
-                        let len = (*GLB.dev_handles).devs.len();
-                        println!("-------- Press any key to set device [{}], to be assigned mappings from {} --------", len, (*GLB.dev_handles).files[len]);
                     }
-                } else if r.k_dir == KDir::Down {
-                    if let Some(o_c) = (*GLB.key_map).get(&(r.h_dev, r.v_k_code)) {
-                        match o_c {
-                            Some(c) => {
-                                if (*GLB.raw_key_logs).kill_override == Override::None && GLB.verbose { println!("Playing chord: {:?}", c); }
-                            },
-                            None => {
+                } else if let Some(o_c) = (*GLB.key_map).get(&(r.h_dev, r.v_k_code)) {
+                    match o_c {
+                        Some(c) => {
+                            if (*GLB.raw_key_logs).kill_override == Override::None {
+                                if GLB.verbose {
+                                    println!("Playing chord: {:?}", c);
+                                }
+                                (*GLB.midi_handler).process_msg(r, c);
+                            }
+                        },
+                        None => {
+                            if r.k_dir == KDir::Down {
                                 (*GLB.raw_key_logs).kill_override = 
                                 match (*GLB.raw_key_logs).kill_override {
                                     Override::None => {
