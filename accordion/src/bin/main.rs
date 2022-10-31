@@ -350,7 +350,7 @@ impl CsvParser {
 }
 
 fn main() {
-    unsafe { GLB.verbose = true; }
+    unsafe { GLB.verbose = false; }
     let mut midi_handler = MidiHandler::new().expect("error creating MidiHandler");
     unsafe{ GLB.midi_handler = &mut midi_handler; }
     let csv_parser = CsvParser::new();
