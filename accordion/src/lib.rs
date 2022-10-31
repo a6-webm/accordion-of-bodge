@@ -228,8 +228,8 @@ impl Note {
 
 #[derive(Debug, Clone)]
 pub struct MidiNote {
-    n: u8,
-    vel: u8,
+    pub n: u8,
+    pub vel: u8,
 }
 
 impl MidiNote {
