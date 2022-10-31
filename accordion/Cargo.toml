@@ -9,3 +9,4 @@ edition = "2021"
 regex = "1.6.0"
 winapi = { version = "0.3", features = ["winuser", "errhandlingapi", "winerror", "libloaderapi", "processthreadsapi", "winbase"] }
 msg_hook = { path = "../msg_hook" }
+midir = "0.8.0"
