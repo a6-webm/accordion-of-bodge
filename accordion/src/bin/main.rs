@@ -12,6 +12,7 @@ use std::io::{stdout, stdin, Write};
 use std::mem::size_of;
 use std::os::windows::prelude::OsStringExt;
 use std::ptr::null_mut;
+use std::time::Instant;
 use std::{env, fs};
 use accordion_of_bodge::{MidiNote, Chord};
 use midir::{MidiOutputConnection, MidiOutput, MidiOutputPort};
@@ -543,6 +544,7 @@ unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM
             return 0;
         },
         WM_INPUT => {
+            let timer = Instant::now();
             let o_r = (*GLB.raw_key_logs).process_raw(l_param);
             if let Some(r) = o_r {
                 if !(*GLB.dev_handles).is_full() {
@@ -569,10 +571,9 @@ unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM
                     match o_c {
                         Some(c) => {
                             if (*GLB.raw_key_logs).kill_override == Override::None {
-                                if GLB.verbose {
-                                    println!("Playing chord: {:?}", c);
-                                }
+                                if GLB.verbose { println!("Playing chord: {:?}", c); }
                                 (*GLB.midi_handler).process_msg(r, c);
+                                if GLB.verbose { println!("Sent midi msg, took {:?} from input to send", timer.elapsed()); }
                             }
                         },
                         None => {
