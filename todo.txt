@@ -2,6 +2,4 @@ GUI?
 
 notification area icon?
 
-optimise code to fix latency
-
-ffi with RtMidi for personal virtual midi port?
+ffi with RtMidi for personal virtual midi port (and hopefully fixes latency issues)
