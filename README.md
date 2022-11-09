@@ -9,7 +9,10 @@ Download the source code and run `cargo build` in that folder.
 # Running
 You can add CSVs for as many keyboards as you want, but there must be at least one CSV for aliases and one CSV for a key presses to midi.
 
-`cargo run --bin main -- aliases.csv cgriff.csv bass.csv` will make two keyboards act like a chromatic button accordion.
+```powershell
+cargo run --bin main -- aliases.csv cgriff.csv bass.csv
+```
+will make two keyboards act like a chromatic button accordion.
 
 # Use
 *exercise left for the reader*
