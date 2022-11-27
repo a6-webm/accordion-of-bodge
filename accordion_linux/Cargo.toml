@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 chord_parser = { path = "../chord_parser" }
+wayland-client = "0.29.5"
