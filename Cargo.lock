@@ -6,10 +6,17 @@ version = 3
 name = "accordion-of-bodge"
 version = "0.1.0"
 dependencies = [
+ "chord_parser",
  "midir",
  "msg_hook",
- "regex",
  "winapi",
+]
+
+[[package]]
+name = "accordion_linux"
+version = "0.1.0"
+dependencies = [
+ "chord_parser",
 ]
 
 [[package]]
@@ -72,6 +79,13 @@ name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
+
+[[package]]
+name = "chord_parser"
+version = "0.1.0"
+dependencies = [
+ "regex",
+]
 
 [[package]]
 name = "core-foundation"

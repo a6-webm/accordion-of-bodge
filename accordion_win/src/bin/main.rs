@@ -14,7 +14,7 @@ use std::os::windows::prelude::OsStringExt;
 use std::ptr::null_mut;
 use std::time::Instant;
 use std::{env, fs};
-use accordion_of_bodge::{MidiNote, Chord};
+use chord_parser::{MidiNote, Chord, CsvParser};
 use midir::{MidiOutputConnection, MidiOutput, MidiOutputPort};
 use regex::Regex;
 use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM, HLOCAL, HINSTANCE, USHORT, LPVOID};
@@ -325,28 +325,6 @@ impl RawKeyLogs {
             return Some(rr);
         }
         return None;
-    }
-}
-
-struct CsvParser {
-    regex: Regex,
-}
-
-impl CsvParser {
-    fn new() -> CsvParser {
-        CsvParser {
-            regex: Regex::new(r#"(?:(?:"(.*?)")|(.*?))(?:(?:,\r?\n)|,|(?:\r?\n)|$)"#).unwrap(),
-        }
-    }
-
-    fn cells_as_vec(&self, s: &str) -> Vec<String>{
-        let mut out: Vec<String> = Vec::new();
-        for caps in self.regex.captures_iter(s) {
-            for m in caps.iter().skip(1).flatten() {
-                out.push(m.as_str().to_owned());
-            }
-        }
-        out
     }
 }
 

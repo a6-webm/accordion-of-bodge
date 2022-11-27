@@ -1,5 +1,7 @@
 [workspace]
 members = [
-    "accordion",
-    "msg_hook"
+    "accordion_win",
+    "msg_hook",
+    "accordion_linux",
+    "chord_parser"
 ]

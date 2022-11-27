@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-regex = "1.6.0"
 winapi = { version = "0.3", features = ["winuser", "errhandlingapi", "winerror", "libloaderapi", "processthreadsapi", "winbase"] }
 msg_hook = { path = "../msg_hook" }
 midir = "0.8.0"
+chord_parser = { path = "../chord_parser" }

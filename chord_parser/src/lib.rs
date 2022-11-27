@@ -2,6 +2,29 @@
 
 use std::fmt::{Display, self};
 use std::num::ParseIntError;
+use regex::Regex;
+
+pub struct CsvParser {
+    regex: Regex,
+}
+
+impl CsvParser {
+    fn new() -> CsvParser {
+        CsvParser {
+            regex: Regex::new(r#"(?:(?:"(.*?)")|(.*?))(?:(?:,\r?\n)|,|(?:\r?\n)|$)"#).unwrap(),
+        }
+    }
+
+    fn cells_as_vec(&self, s: &str) -> Vec<String>{
+        let mut out: Vec<String> = Vec::new();
+        for caps in self.regex.captures_iter(s) {
+            for m in caps.iter().skip(1).flatten() {
+                out.push(m.as_str().to_owned());
+            }
+        }
+        out
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum ChordError {
@@ -223,7 +246,7 @@ impl Note {
     }
 
     fn pitch(&self) -> i32 {
-        (self.octave as i32 + 1) * 12 + self.note as i32 + self.accidental as i32
+        (self.octave as i32 + 1) * 12 + self.note.to_owned() as i32 + self.accidental as i32
     }
     
     pub fn to_midi(&self, vel: u8) -> Result<MidiNote, NoteError> {
