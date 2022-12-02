@@ -9,13 +9,13 @@ pub struct CsvParser {
 }
 
 impl CsvParser {
-    fn new() -> CsvParser {
+    pub fn new() -> CsvParser {
         CsvParser {
             regex: Regex::new(r#"(?:(?:"(.*?)")|(.*?))(?:(?:,\r?\n)|,|(?:\r?\n)|$)"#).unwrap(),
         }
     }
 
-    fn cells_as_vec(&self, s: &str) -> Vec<String>{
+    pub fn cells_as_vec(&self, s: &str) -> Vec<String>{
         let mut out: Vec<String> = Vec::new();
         for caps in self.regex.captures_iter(s) {
             for m in caps.iter().skip(1).flatten() {

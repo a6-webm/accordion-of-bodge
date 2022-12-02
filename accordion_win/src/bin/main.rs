@@ -16,19 +16,15 @@ use std::time::Instant;
 use std::{env, fs};
 use chord_parser::{MidiNote, Chord, CsvParser};
 use midir::{MidiOutputConnection, MidiOutput, MidiOutputPort};
-use regex::Regex;
-use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM, HLOCAL, HINSTANCE, USHORT, LPVOID};
-use winapi::ctypes::c_int;
-use winapi::shared::ntdef::LPCSTR;
+use winapi::shared::minwindef::{UINT, LRESULT, WPARAM, LPARAM, HLOCAL, USHORT, LPVOID};
 use winapi::shared::windef::HWND;
 use winapi::um::errhandlingapi::GetLastError;
-use winapi::um::libloaderapi::{GetModuleHandleW, LoadLibraryW, GetProcAddress, FreeLibrary};
+use winapi::um::libloaderapi::GetModuleHandleW;
 use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOW};
 use winapi::um::winbase::{FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_ALLOCATE_BUFFER, FORMAT_MESSAGE_IGNORE_INSERTS, LocalFree};
 use winapi::um::winnt::{MAKELANGID, LANG_NEUTRAL, SUBLANG_DEFAULT, LPWSTR, HANDLE};
-use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, WS_VISIBLE, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, SetWindowsHookExW, UnhookWindowsHookEx, WM_USER, WH_KEYBOARD, RAWINPUT, WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP, PeekMessageW, WM_INPUT, PM_REMOVE, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, GetRawInputData, RIM_TYPEKEYBOARD};
+use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, WS_VISIBLE, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, RAWINPUT, WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP, WM_INPUT, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, GetRawInputData, RIM_TYPEKEYBOARD};
 
-const WM_SHOULDBLKKEY: UINT = WM_USER + 300;
 type KeyMap = HashMap<(HANDLE, USHORT), Option<Vec<MidiNote>>>;
 
 static mut GLB: Globals = Globals {
@@ -175,129 +171,17 @@ impl RawKRecord {
     }
 }
 
-struct RawKeyLogIter<'a> {
-    logs: &'a RawKeyLogs,
-    i: usize,
-}
-
-impl<'a> Iterator for RawKeyLogIter<'a> {
-    type Item = &'a RawKRecord;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let vec = &self.logs.records;
-        let i = self.i;
-        self.i += 1;
-
-        if i >= vec.len() {
-            return None;
-        }
-        return vec[(self.logs.ind + vec.len() - i) % vec.len()].as_ref();
-    }
-}
-
-#[derive(PartialEq)]
-enum Override {
-    None,
-    KillAll,
-    ProcessNone,
-}
-
 struct RawKeyLogs {
-    records: Vec<Option<RawKRecord>>,
     bound_keys: Vec<(HANDLE, USHORT)>,
     toggle_keys: Vec<(HANDLE, USHORT)>,
-    kill_override: Override,
-    ind: usize,
-    h_wnd: HWND,
 }
 
 impl RawKeyLogs {
-    fn new(size: usize, h_wnd: HWND) -> Self {
+    fn new() -> Self {
         RawKeyLogs {
-            records: vec![None; size],
             bound_keys: Vec::new(),
             toggle_keys: Vec::new(),
-            kill_override: Override::KillAll,
-            ind: size - 1,
-            h_wnd,
         }
-    }
-
-    fn iter(&self) -> RawKeyLogIter {
-        RawKeyLogIter { logs: self, i: 0 }
-    }
-
-    fn push(&mut self, r: RawKRecord) {
-        if unsafe {GLB.verbose} { println!("RawInput: {:?} - {} - {:?}", r.h_dev, r.v_k_code, r.k_dir); }
-        self.ind += 1;
-        self.ind %= self.records.len();
-        self.records[self.ind] = Some(r);
-    }
-
-    fn should_kill(&mut self, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
-        const KILL: LRESULT = 1;
-        const NO_KILL: LRESULT = 0;
-        let o_r = self.rec_from_hook_msg(w_param, l_param);
-        if let Some(r) = o_r.as_ref() {
-            if self.toggle_keys.contains(&(r.h_dev, r.v_k_code)) {
-                return KILL;
-            }
-        }
-        match self.kill_override {
-            Override::KillAll => return KILL,
-            Override::ProcessNone => return NO_KILL,
-            Override::None => {
-                if let Some(r) = o_r {
-                    if self.bound_keys.contains(&(r.h_dev, r.v_k_code)) {
-                        return KILL;
-                    }
-                }
-                return NO_KILL;
-            },
-        }
-    }
-
-    fn rec_from_hook_msg(&mut self, w_param: WPARAM, l_param: LPARAM) -> Option<RawKRecord> {
-        if let Some(r) = self.rec_from_hook_msg_in_logs(self.records.len(), w_param, l_param) {
-            if unsafe {GLB.verbose} { println!("Linked: {:?} - {} - {:?}", r.h_dev, r.v_k_code, r.k_dir); }
-            return Some(r);
-        }
-        if unsafe {GLB.verbose} { print!("Input not found, peeking queue... "); }
-        let new_msgs = self.process_waiting_msgs();
-        if unsafe {GLB.verbose} { println!("Found {new_msgs} new msgs"); }
-        if let Some(r) = self.rec_from_hook_msg_in_logs(new_msgs, w_param, l_param) {
-            println!("Linked after peek: {:?} - {} - {:?}", r.h_dev, r.v_k_code, r.k_dir);
-            return Some(r);
-        }
-        if unsafe {GLB.verbose} { println!("Could not link input"); }
-        return None;
-    }
-
-    fn rec_from_hook_msg_in_logs(&mut self, search_amt: usize, w_param: WPARAM, l_param: LPARAM) -> Option<RawKRecord> {
-        for (i, r) in self.iter().enumerate() {
-            if i >= search_amt { break; }
-            let v_k_code: USHORT = w_param.try_into().unwrap();
-            let k_dir = if l_param & (1 << 31) == 0 { KDir::Down } else { KDir::Up };
-            if v_k_code == r.v_k_code && k_dir == r.k_dir {
-                let out = r.to_owned();
-                let len = self.records.len();
-                self.records[(self.ind + len - i) % len] = None; // "clears" buffer
-                return Some(out);
-            }
-        }
-        return None;
-    }
-
-    fn process_waiting_msgs(&mut self) -> usize {
-        let mut count = 0;
-        unsafe {
-            let mut lp_msg: MSG = std::mem::zeroed();
-            while PeekMessageW(&mut lp_msg, self.h_wnd, WM_INPUT, WM_INPUT, PM_REMOVE) > 0 {
-                self.process_raw(lp_msg.lParam);
-                count += 1;
-            }
-        }
-        return count;
     }
 
     fn process_raw(&mut self, l_param: LPARAM) -> Option<RawKRecord> {
@@ -316,12 +200,10 @@ impl RawKeyLogs {
             ) && GLB.verbose { println!("GetRawInputData does not return correct size!"); }
         }
         
-
         let raw: &RAWINPUT = unsafe { &*(raw_data_buffer.as_ptr() as *const RAWINPUT) };
 
         if raw.header.dwType == RIM_TYPEKEYBOARD {
             let rr = RawKRecord::new(raw);
-            self.push(rr.to_owned());
             return Some(rr);
         }
         return None;
@@ -452,34 +334,10 @@ fn main() {
             panic!("failed to register raw input TLC");
         }
     }
-
-    let h_inst_lib: HINSTANCE = unsafe { LoadLibraryW(win32_string("msg_hook.dll").as_mut_ptr()) };
-    if h_inst_lib.is_null() { panic!("could not link dll"); }
-    
-    let p_set_hwnd = unsafe { GetProcAddress(h_inst_lib, "set_hwnd\0".as_ptr() as LPCSTR) };
-    if p_set_hwnd.is_null() {
-        unsafe{ FreeLibrary(h_inst_lib); }
-        panic!("couldn't retrieve set_hwnd from dll");
-    }
-    let set_hwnd: unsafe extern "system" fn (HWND) = unsafe { std::mem::transmute(p_set_hwnd) };
-    unsafe { set_hwnd(hwnd); }
-    
-    let p_hook_proc = unsafe { GetProcAddress(h_inst_lib, "key_hook_proc\0".as_ptr() as LPCSTR) };
-    if p_hook_proc.is_null() {
-        unsafe{ FreeLibrary(h_inst_lib); }
-        panic!("couldn't retrieve key_hook_proc from dll")
-    }
-    let hook_proc: unsafe extern "system" fn (c_int, WPARAM, LPARAM) -> LRESULT = unsafe { std::mem::transmute(p_hook_proc) };
-
-    let msg_hook = unsafe { SetWindowsHookExW(WH_KEYBOARD, Some(hook_proc), h_inst_lib, 0) };
-    if msg_hook.is_null() {
-        print_last_win_error();
-        panic!("failed to set msg hook");
-    }
     // Windows init ^^------------------------------------------------------------------------------------------
     // ---------------------------------------------------------------------------------------------------------
 
-    let mut raw_key_logs = RawKeyLogs::new(100, hwnd);
+    let mut raw_key_logs = RawKeyLogs::new();
     unsafe{ GLB.raw_key_logs = &mut raw_key_logs; }
 
     unsafe {
@@ -489,11 +347,6 @@ fn main() {
         while GetMessageW(&mut lp_msg, 0 as HWND, 0, 0) > 0 {
             DispatchMessageW(&lp_msg);
         }
-    }
-
-    unsafe{
-        UnhookWindowsHookEx(msg_hook);
-        FreeLibrary(h_inst_lib);
     }
 
 }
@@ -514,61 +367,45 @@ unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM
     use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY}};
 
     match i_message {
-        WM_SHOULDBLKKEY => {
-            return (*GLB.raw_key_logs).should_kill(w_param, l_param);
-        },
         WM_DESTROY => {
             dbg!(PostQuitMessage(0));
             return 0;
         },
         WM_INPUT => {
             let timer = Instant::now();
-            let o_r = (*GLB.raw_key_logs).process_raw(l_param);
-            if let Some(r) = o_r {
-                if !(*GLB.dev_handles).is_full() {
-                    if r.k_dir == KDir::Down {
-                        (*GLB.dev_handles).push_d(r.h_dev);
-                        if (*GLB.dev_handles).is_full() {
-                            println!("Resolving device handles...");
-                            (*GLB.dev_handles).populate_devs(&mut *GLB.key_map);
-                            for ((h, v_k), c) in &*GLB.key_map {
-                                if c.is_none() {
-                                    (*GLB.raw_key_logs).toggle_keys.push((h.to_owned(), v_k.to_owned()));
-                                }
-                                (*GLB.raw_key_logs).bound_keys.push((h.to_owned(), v_k.to_owned()));
-                                (*GLB.midi_handler).insert_key((h.to_owned(), v_k.to_owned()))
+            let r = match (*GLB.raw_key_logs).process_raw(l_param) {
+                Some(rec) => rec,
+                None => return 0,
+            };
+            if !(*GLB.dev_handles).is_full() {
+                if r.k_dir == KDir::Down {
+                    (*GLB.dev_handles).push_d(r.h_dev);
+                    if (*GLB.dev_handles).is_full() {
+                        println!("Resolving device handles...");
+                        (*GLB.dev_handles).populate_devs(&mut *GLB.key_map);
+                        for ((h, v_k), c) in &*GLB.key_map {
+                            if c.is_none() {
+                                (*GLB.raw_key_logs).toggle_keys.push((h.to_owned(), v_k.to_owned()));
                             }
-                            (*GLB.raw_key_logs).kill_override = Override::None;
-                            println!("-------- All devices set! --------");
-                        } else {
-                            let len = (*GLB.dev_handles).devs.len();
-                            println!("-------- Press any key to set device [{}], to be assigned mappings from {} --------", len, (*GLB.dev_handles).files[len]);
+                            (*GLB.raw_key_logs).bound_keys.push((h.to_owned(), v_k.to_owned()));
+                            (*GLB.midi_handler).insert_key((h.to_owned(), v_k.to_owned()))
                         }
+                        println!("-------- All devices set! --------");
+                    } else {
+                        let len = (*GLB.dev_handles).devs.len();
+                        println!("-------- Press any key to set device [{}], to be assigned mappings from {} --------", len, (*GLB.dev_handles).files[len]);
                     }
-                } else if let Some(o_c) = (*GLB.key_map).get(&(r.h_dev, r.v_k_code)) {
-                    match o_c {
-                        Some(c) => {
-                            if (*GLB.raw_key_logs).kill_override == Override::None {
-                                if GLB.verbose { println!("Playing chord: {:?}", c); }
-                                (*GLB.midi_handler).process_msg(r, c);
-                                if GLB.verbose { println!("Sent midi msg, took {:?} from input to send", timer.elapsed()); }
-                            }
-                        },
-                        None => {
-                            if r.k_dir == KDir::Down {
-                                (*GLB.raw_key_logs).kill_override = 
-                                match (*GLB.raw_key_logs).kill_override {
-                                    Override::None => {
-                                        if GLB.verbose { println!("Processing off"); }
-                                        Override::ProcessNone
-                                    },
-                                    Override::ProcessNone => {
-                                        if GLB.verbose { println!("Processing on"); }
-                                        Override::None
-                                    },
-                                    Override::KillAll => unreachable!("Override == KillAll after device init"),
-                                };
-                            }
+                }
+            } else if let Some(o_c) = (*GLB.key_map).get(&(r.h_dev, r.v_k_code)) {
+                match o_c {
+                    Some(c) => {
+                        if GLB.verbose { println!("Playing chord: {:?}", c); }
+                        (*GLB.midi_handler).process_msg(r, c);
+                        if GLB.verbose { println!("Sent midi msg, took {:?} from input to send", timer.elapsed()); }
+                    },
+                    None => {
+                        if r.k_dir == KDir::Down {
+                            todo!("Implement toggling pressing keys");
                         }
                     }
                 }
