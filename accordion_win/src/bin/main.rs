@@ -23,23 +23,19 @@ use winapi::um::libloaderapi::GetModuleHandleW;
 use winapi::um::processthreadsapi::{GetStartupInfoW, STARTUPINFOW};
 use winapi::um::winbase::{FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_ALLOCATE_BUFFER, FORMAT_MESSAGE_IGNORE_INSERTS, LocalFree};
 use winapi::um::winnt::{MAKELANGID, LANG_NEUTRAL, SUBLANG_DEFAULT, LPWSTR, HANDLE};
-use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, WS_VISIBLE, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, RAWINPUT, WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP, WM_INPUT, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, GetRawInputData, RIM_TYPEKEYBOARD};
+use winapi::um::winuser::{WNDCLASSEXW, RegisterClassExW, CreateWindowExW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, GetMessageW, DispatchMessageW, MSG, WS_VISIBLE, PostQuitMessage, RAWINPUTDEVICE, RIDEV_NOLEGACY, RegisterRawInputDevices, RIDEV_INPUTSINK, RAWINPUT, WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP, WM_INPUT, HRAWINPUT, RID_INPUT, RAWINPUTHEADER, GetRawInputData, RIM_TYPEKEYBOARD, RIDEV_NOHOTKEYS, WM_DESTROY, DefWindowProcW};
 
-type KeyMap = HashMap<(HANDLE, USHORT), Option<Vec<MidiNote>>>;
+type Keymap = HashMap<(HANDLE, USHORT), Vec<MidiNote>>;
 
 static mut GLB: Globals = Globals {
-    verbose: false,
-    raw_key_logs: null_mut(),
-    key_map: null_mut(),
-    dev_handles: null_mut(),
+    keymap: null_mut(),
+    keymap_builder: null_mut(),
     midi_handler: null_mut(),
 };
 
 struct Globals {
-    verbose: bool,
-    raw_key_logs: *mut RawKeyLogs,
-    key_map: *mut KeyMap,
-    dev_handles: *mut DevHandles,
+    keymap: *mut Keymap,
+    keymap_builder: *mut KeymapBuilder,
     midi_handler: *mut MidiHandler,
 }
 
@@ -78,15 +74,22 @@ impl MidiHandler {
         return Ok(MidiHandler { note_states: vec!(0; 256), key_states: HashMap::new(), conn_out });
     }
 
-    fn insert_key(&mut self, key: (HANDLE, USHORT)) {
-        self.key_states.insert(key, KDir::Up);
+    fn initialise_key_states(&mut self, keymap: &Keymap) {
+        for (key, _) in keymap.iter() {
+            self.key_states.insert(key.to_owned(), KDir::Up);
+        }
     }
 
     fn process_msg(&mut self, r: RawKRecord, notes: &Vec<MidiNote>) {
         const NOTE_ON_MSG: u8 = 0x90;
         const NOTE_OFF_MSG: u8 = 0x80;
-        if *self.key_states.get(&(r.h_dev, r.v_k_code)).unwrap() == r.k_dir {
-            return; // return if key hasn't changed state
+        match self.key_states.get(&(r.h_dev, r.v_k_code)) {
+            None => return, // key not in keymap
+            Some(k_dir) => {
+                if *k_dir == r.k_dir {
+                    return; // return if key hasn't changed state
+                }
+            },
         }
         self.key_states.insert((r.h_dev, r.v_k_code), r.k_dir.to_owned());
         
@@ -97,13 +100,13 @@ impl MidiHandler {
                         self.note_states[mn.n as usize] -= 1;
                     }
                     if self.note_states[mn.n as usize] == 0 {
-                        if unsafe {GLB.verbose} { println!("note: {} off", mn.n); }
+                        println!("note: {} off", mn.n);
                         let _ = self.conn_out.send(&[NOTE_OFF_MSG, mn.n, mn.vel]);
                     }
                 },
                 KDir::Down => {
                     if self.note_states[mn.n as usize] == 0 {
-                        if unsafe {GLB.verbose} { println!("note: {} on", mn.n); }
+                        println!("note: {} on", mn.n);
                         let _ = self.conn_out.send(&[NOTE_ON_MSG, mn.n, mn.vel]);
                     }
                     self.note_states[mn.n as usize] += 1;
@@ -113,15 +116,19 @@ impl MidiHandler {
     }
 }
 
-struct DevHandles {
+struct KeymapBuilder {
+    keymap: Keymap,
     files: Vec<String>,
     devs: Vec<HANDLE>,
-    amt: usize,
 }
 
-impl DevHandles {
-    fn new(amt: usize) -> Self {
-        DevHandles { devs: Vec::with_capacity(amt), files: Vec::with_capacity(amt), amt }
+impl KeymapBuilder {
+    fn new() -> Self {
+        KeymapBuilder { keymap: HashMap::new(), devs: Vec::new(), files: Vec::new()}
+    }
+
+    fn push_km(&mut self, dev_and_key: (HANDLE, USHORT), notes: Vec<MidiNote>) {
+        self.keymap.insert(dev_and_key, notes);
     }
 
     fn push_d(&mut self, dev: HANDLE) {
@@ -132,16 +139,16 @@ impl DevHandles {
         self.files.push(fl);
     }
 
-    fn populate_devs(&self, k_m: &mut KeyMap) {
-        let old_k_m = k_m.to_owned();
-        k_m.clear();
-        for ((h, v_k), mn) in old_k_m {
-            k_m.insert((self.devs[h as usize], v_k), mn);
-        }
+    fn is_filled(&self) -> bool {
+        self.devs.len() == self.files.len()
     }
 
-    fn is_full(&self) -> bool {
-        self.devs.len() == self.amt
+    fn build(self) -> Keymap {
+        let out = Keymap::new();
+        for ((h, v_k), mn) in self.keymap {
+            out.insert((self.devs[h as usize], v_k), mn);
+        }
+        return out;
     }
 }
 
@@ -159,35 +166,10 @@ struct RawKRecord {
 }
 
 impl RawKRecord {
-    fn new(r: &RAWINPUT) -> RawKRecord {
-        let k_dir = unsafe { match r.data.keyboard().Message {
-            WM_KEYDOWN | WM_SYSKEYDOWN => KDir::Down,
-            WM_KEYUP | WM_SYSKEYUP => KDir::Up,
-            _ => unreachable!("recieved non key message from rawinput"),
-        } };
-        let h_dev = r.header.hDevice;
-        let v_k_code = unsafe { r.data.keyboard().VKey };
-        return RawKRecord {k_dir, h_dev, v_k_code};
-    }
-}
-
-struct RawKeyLogs {
-    bound_keys: Vec<(HANDLE, USHORT)>,
-    toggle_keys: Vec<(HANDLE, USHORT)>,
-}
-
-impl RawKeyLogs {
-    fn new() -> Self {
-        RawKeyLogs {
-            bound_keys: Vec::new(),
-            toggle_keys: Vec::new(),
-        }
-    }
-
-    fn process_raw(&mut self, l_param: LPARAM) -> Option<RawKRecord> {
+    fn new(l_param: LPARAM) -> Option<RawKRecord> {
         let mut rid_size: UINT = 0;
         unsafe { GetRawInputData(l_param as HRAWINPUT, RID_INPUT, null_mut(), &mut rid_size, size_of::<RAWINPUTHEADER>() as UINT); }
-        if rid_size == 0 { return None; } // not sure if this can happen, but microsoft docs do this
+        if rid_size == 0 { return None; } // not sure if this can happen, but microsoft documentation does this
         let mut raw_data_buffer: Vec<u8> = Vec::with_capacity(rid_size.try_into().unwrap());
 
         unsafe {
@@ -197,33 +179,39 @@ impl RawKeyLogs {
                 raw_data_buffer.as_mut_ptr() as LPVOID,
                 &mut rid_size,
                 size_of::<RAWINPUTHEADER>() as UINT
-            ) && GLB.verbose { println!("GetRawInputData does not return correct size!"); }
+            ) { println!("GetRawInputData does not return correct size!"); }
         }
         
         let raw: &RAWINPUT = unsafe { &*(raw_data_buffer.as_ptr() as *const RAWINPUT) };
 
-        if raw.header.dwType == RIM_TYPEKEYBOARD {
-            let rr = RawKRecord::new(raw);
-            return Some(rr);
+        if raw.header.dwType != RIM_TYPEKEYBOARD {
+            return None;
         }
-        return None;
+        let rawdK = unsafe{ raw.data.keyboard() };
+
+        let k_dir = unsafe { match rawdK.Message {
+            WM_KEYDOWN | WM_SYSKEYDOWN => KDir::Down,
+            WM_KEYUP | WM_SYSKEYUP => KDir::Up,
+            _ => unreachable!("recieved non key message from rawinput"),
+        } };
+        let h_dev = raw.header.hDevice;
+        let v_k_code = unsafe { rawdK.VKey };
+        return Some(RawKRecord {k_dir, h_dev, v_k_code});
     }
 }
 
 fn main() {
-    unsafe { GLB.verbose = false; }
+    let args: Vec<String> = env::args().collect(); // TODO error if file does not end with .csv
+    
+    // Init globals
+    let mut keymap_builder  = KeymapBuilder::new();
+    unsafe { GLB.keymap_builder = &mut keymap_builder; }
     let mut midi_handler = MidiHandler::new().expect("error creating MidiHandler");
     unsafe{ GLB.midi_handler = &mut midi_handler; }
-    let csv_parser = CsvParser::new();
-    let args: Vec<String> = env::args().collect(); // TODO error if file does not end with .csv
-
-    // ---------------------------------------------------------------------------------------------------------
-    // Key map init vv------------------------------------------------------------------------------------------
-    let mut key_aliases: HashMap<String, USHORT> = HashMap::new();
-    let mut key_map: KeyMap = HashMap::new();
-    unsafe { GLB.key_map = &mut key_map; }
-
+    
     // Populate key_aliases
+    let csv_parser = CsvParser::new();
+    let mut key_aliases: HashMap<String, USHORT> = HashMap::new();
     {
         let key_aliases_fp = args.get(1).expect("Correct usage: "); //TODO allow ommission of this parameter // TODO finish Correct usage
         let key_aliases_string = fs::read_to_string(key_aliases_fp).expect("Failed to read file: ");
@@ -242,10 +230,8 @@ fn main() {
     // Populate key_map
     let keymap_files: &[String] = &args[2..];
     if keymap_files.is_empty() { panic!("Correct usage: ") } // TODO finish Correct usage
-    let mut dev_handles = DevHandles::new(keymap_files.len());
-    unsafe { GLB.dev_handles = &mut dev_handles}
     for (i, keymap_fp) in keymap_files.iter().enumerate() {
-        unsafe { (*GLB.dev_handles).push_f(keymap_fp.to_owned()); }
+        unsafe { (*GLB.keymap_builder).push_f(keymap_fp.to_owned()); }
         
         let keymap_string = fs::read_to_string(keymap_fp).expect("Failed to read file: ");
         let keymap_csv = csv_parser.cells_as_vec(keymap_string.as_str());
@@ -255,39 +241,63 @@ fn main() {
                 continue;
             }
             let mut iter = s.splitn(3, |c| c == '=' || c == '.');
+
             let chord_str = iter.next().expect("Wrong syntax in keymap CSV file").trim();
             let alias = iter.next().expect("Wrong syntax in keymap CSV file").trim();
             let key: USHORT = match key_aliases.get(alias) {
                 Some(s) => *s,
                 None => alias.parse().expect("alias not in aliases.csv and not a number\neither add to aliases.csv or use a correctly formatted number"),
             };
-            if chord_str == "TOGGLE" {
-                key_map.insert((i as HANDLE, key.to_owned()), None);
-                break;
-            }
             let vel: u8 = iter.next().expect("Wrong syntax in keymap CSV file").trim()
                 .parse().expect("Wrong syntax in keymap CSV file"); // TODO More descriptive error messages?
             let chord = Chord::new(chord_str).expect("Wrong syntax in keymap CSV file")
                 .to_midi_chord(vel).expect("Error creating chord");
-            key_map.insert((i as HANDLE, key.to_owned()), Some(chord));
+            
+            unsafe { (*GLB.keymap_builder).push_km((i as HANDLE, key.to_owned()), chord); };
         }
     }
 
-    println!("key_map: {:?}", key_map);
-    // Key map init ^^------------------------------------------------------------------------------------------
-    // ---------------------------------------------------------------------------------------------------------
+    make_window("Accordion of Bodge: Set devices", init_devices_wnd_proc);
 
-    // ---------------------------------------------------------------------------------------------------------
-    // Windows init vv------------------------------------------------------------------------------------------
+    unsafe {
+        let mut lp_msg: MSG = std::mem::zeroed();
+        println!("Msg loop started");
+        println!("-------- Press any key to set device [0], to be assigned mappings from {} --------", (*GLB.dev_handles).files[0]);
+        while GetMessageW(&mut lp_msg, 0 as HWND, 0, 0) > 0 {
+            DispatchMessageW(&lp_msg);
+        }
+    }
+
+    if unsafe { !(*GLB.keymap_builder).is_filled() } {
+        return; // Set devices window closed prematurely
+    }
+
+    // TODO resolve device handles/build
+    
+
+    make_window("Accordion of Bodge", play_wnd_proc);
+
+    unsafe {
+        let mut lp_msg: MSG = std::mem::zeroed();
+        println!("Msg loop started");
+        println!("-------- Press any key to set device [0], to be assigned mappings from {} --------", (*GLB.dev_handles).files[0]);
+        while GetMessageW(&mut lp_msg, 0 as HWND, 0, 0) > 0 {
+            DispatchMessageW(&lp_msg);
+        }
+    }
+
+}
+
+fn make_window(name: &str, wnd_proc: unsafe extern "system" fn (HWND, UINT, WPARAM, LPARAM) -> LRESULT) {
     let h_instance = unsafe { GetModuleHandleW(null_mut()) };
 
     let mut startup_info: STARTUPINFOW;
     unsafe {
         startup_info = std::mem::zeroed();
-        GetStartupInfoW(&mut startup_info); // Don't think I need to free this
+        GetStartupInfoW(&mut startup_info);
     };
 
-    let class_name = win32_string("my_first_window");
+    let class_name = win32_string("the_epic_window_class");
 
     let wc = WNDCLASSEXW {
         cbSize: size_of::<WNDCLASSEXW>() as u32,
@@ -309,7 +319,7 @@ fn main() {
     let hwnd: HWND = unsafe { CreateWindowExW(
             0,
             class_name.as_ptr(),
-            win32_string("the bruh window").as_ptr(),
+            win32_string(name).as_ptr(),
             WS_VISIBLE | WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -325,33 +335,18 @@ fn main() {
     let rid_tlc = RAWINPUTDEVICE {
         usUsagePage: 1, // HID_USAGE_PAGE_GENERIC
         usUsage: 6, // HID_USAGE_GENERIC_KEYBOARD
-        dwFlags: RIDEV_NOLEGACY | RIDEV_INPUTSINK, // ignores legacy keyboard messages and reads input when not focused
+        dwFlags: RIDEV_NOLEGACY | RIDEV_NOHOTKEYS, // ignores legacy keyboard messages and prevents hotkeys from triggering // TODO check if RIDEV_NOHOTKEYS actually does this lmao
         hwndTarget: hwnd,
     };
 
-    unsafe { 
+    unsafe {
         if RegisterRawInputDevices(&rid_tlc, 1, size_of::<RAWINPUTDEVICE>() as UINT) == 0 {
             panic!("failed to register raw input TLC");
         }
     }
-    // Windows init ^^------------------------------------------------------------------------------------------
-    // ---------------------------------------------------------------------------------------------------------
-
-    let mut raw_key_logs = RawKeyLogs::new();
-    unsafe{ GLB.raw_key_logs = &mut raw_key_logs; }
-
-    unsafe {
-        let mut lp_msg: MSG = std::mem::zeroed();
-        println!("Msg loop started");
-        println!("-------- Press any key to set device [0], to be assigned mappings from {} --------", (*GLB.dev_handles).files[0]);
-        while GetMessageW(&mut lp_msg, 0 as HWND, 0, 0) > 0 {
-            DispatchMessageW(&lp_msg);
-        }
-    }
-
 }
 
- fn print_last_win_error() {
+fn print_last_win_error() {
     unsafe {
         let message_buffer: LPWSTR = null_mut();
         let error_message_id = GetLastError();
@@ -362,13 +357,38 @@ fn main() {
         LocalFree(message_buffer as HLOCAL);
     }
 }
+unsafe extern "system" fn init_devices_wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
+    match i_message {
+        WM_DESTROY => {
+            PostQuitMessage(0);
+        },
+        WM_INPUT => {
+            let r = match RawKRecord::new(l_param) {
+                Some(rec) => rec,
+                None => return 0,
+            };
+            if r.k_dir != KDir::Down { return 0;}
+            (*GLB.keymap_builder).push_d(r.h_dev);
+            if (*GLB.keymap_builder).is_filled() {
+                PostQuitMessage(0);
+                return 0;
+            }
+            let i = (*GLB.keymap_builder).devs.len();
+            println!("-------- Press any key to set device [{}], to be assigned mappings from {} --------", i, (*GLB.keymap_builder).files[i]);
+            return 0;
+        },
+        _ => return DefWindowProcW(h_wnd, i_message, w_param, l_param),
+    }
+    return 0;
+}
 
-unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
+
+unsafe extern "system" fn bruh_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     use winapi::{um::winuser::{DefWindowProcW, WM_DESTROY}};
 
     match i_message {
         WM_DESTROY => {
-            dbg!(PostQuitMessage(0));
+            PostQuitMessage(0);
             return 0;
         },
         WM_INPUT => {
@@ -399,9 +419,9 @@ unsafe extern "system" fn wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM
             } else if let Some(o_c) = (*GLB.key_map).get(&(r.h_dev, r.v_k_code)) {
                 match o_c {
                     Some(c) => {
-                        if GLB.verbose { println!("Playing chord: {:?}", c); }
+                        println!("Playing chord: {:?}", c);
                         (*GLB.midi_handler).process_msg(r, c);
-                        if GLB.verbose { println!("Sent midi msg, took {:?} from input to send", timer.elapsed()); }
+                        println!("Sent midi msg, took {:?} from input to send", timer.elapsed());
                     },
                     None => {
                         if r.k_dir == KDir::Down {
