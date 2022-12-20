@@ -1,10 +1,5 @@
 #![allow(clippy::missing_safety_doc, clippy::needless_return)]
 
-// enum of Keyboard keys
-// f(key) -> GlovePIE keycode
-
-// parse CSV of notes/chords mapped to keyboard(||stradella bass system?)
-
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsString;
@@ -199,6 +194,121 @@ impl RawKRecord {
     }
 }
 
+fn win32_string( value : &str ) -> Vec<u16> {
+    use std::{ffi::OsStr, os::windows::prelude::OsStrExt, iter::once};
+    OsStr::new( value ).encode_wide().chain( once( 0 ) ).collect()
+}
+
+fn make_window(name: &str, class: &str, wnd_proc: unsafe extern "system" fn (HWND, UINT, WPARAM, LPARAM) -> LRESULT, h_instance: *mut winapi::shared::minwindef::HINSTANCE__) -> HWND {
+    let wc = WNDCLASSEXW {
+        cbSize: size_of::<WNDCLASSEXW>() as u32,
+        style: 0,
+        lpfnWndProc: Some(wnd_proc),
+        cbClsExtra: 0,
+        cbWndExtra: 0,
+        hInstance: h_instance,
+        hIcon: null_mut(),
+        hCursor: null_mut(),
+        hbrBackground: null_mut(),
+        lpszMenuName: null_mut(),
+        lpszClassName: win32_string(class).as_ptr(),
+        hIconSm: null_mut(),
+    };
+
+    unsafe { RegisterClassExW(&wc); }
+
+    let hwnd: HWND = unsafe { CreateWindowExW(
+            0,
+            win32_string(class).as_ptr(),
+            win32_string(name).as_ptr(),
+            WS_VISIBLE | WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            600,
+            600,
+            null_mut(),
+            null_mut(),
+            h_instance,
+            null_mut(),
+    )};
+    if hwnd.is_null() { panic!("failed to create window"); }
+
+    let rid_tlc = RAWINPUTDEVICE {
+        usUsagePage: 1, // HID_USAGE_PAGE_GENERIC
+        usUsage: 6, // HID_USAGE_GENERIC_KEYBOARD
+        dwFlags: RIDEV_NOLEGACY | RIDEV_NOHOTKEYS, // ignores legacy keyboard messages and prevents hotkeys from triggering // TODO check if RIDEV_NOHOTKEYS actually does this lmao
+        hwndTarget: hwnd,
+    };
+
+    unsafe {
+        if RegisterRawInputDevices(&rid_tlc, 1, size_of::<RAWINPUTDEVICE>() as UINT) == 0 {
+            panic!("failed to register raw input TLC");
+        }
+    }
+
+    return hwnd;
+}
+
+fn print_last_win_error() {
+    unsafe {
+        let message_buffer: LPWSTR = null_mut();
+        let error_message_id = GetLastError();
+        let size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            null_mut(), error_message_id, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT).into(), &message_buffer as *const LPWSTR as LPWSTR, 0, null_mut());
+        let str = OsString::from_wide(std::slice::from_raw_parts(message_buffer, size as usize));
+        println!("GetLastError: {:?}", str);
+        LocalFree(message_buffer as HLOCAL);
+    }
+}
+
+unsafe extern "system" fn init_devices_wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
+    match i_message {
+        WM_INPUT => {
+            let r = match RawKRecord::new(l_param) {
+                Some(rec) => rec,
+                None => return 0,
+            };
+            if r.k_dir != KDir::Down { return 0;}
+            if (*GLB.keymap_builder).is_filled() { return 0; }
+            (*GLB.keymap_builder).push_d(r.h_dev);
+            if (*GLB.keymap_builder).is_filled() {
+                PostMessageA(null_mut(), WM_USER + 1, 0, 0);
+                DestroyWindow(h_wnd);
+                return 0;
+            }
+            let dev_i = (*GLB.keymap_builder).devs.len();
+            println!("-------- Press any key on the device that should use {} for mappings --------", (*GLB.keymap_builder).files[dev_i]);
+            return 0;
+        },
+        _ => return DefWindowProcW(h_wnd, i_message, w_param, l_param),
+    }
+}
+
+unsafe extern "system" fn play_wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
+    match i_message {
+        WM_DESTROY => {
+            PostQuitMessage(0);
+            return 0;
+        },
+        WM_INPUT => {
+            let timer = Instant::now();
+            let r = match RawKRecord::new(l_param) {
+                Some(r) => r,
+                None => return 0,
+            };
+            let notes = match (*GLB.keymap).get(&(r.h_dev, r.v_k_code)) {
+                Some(notes) => notes,
+                None => return 0,
+            };
+            println!("Playing chord: {:?}", notes);
+            (*GLB.midi_handler).process_msg(r, notes);
+            println!("Sent midi msg, took {:?} from input to send", timer.elapsed());
+            return 0;
+        },
+        _ => DefWindowProcW(h_wnd, i_message, w_param, l_param),
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect(); // TODO error if file does not end with .csv
     let h_instance = unsafe { GetModuleHandleW(null_mut()) };
@@ -289,119 +399,4 @@ fn main() {
         }
     }
 
-}
-
-fn make_window(name: &str, class: &str, wnd_proc: unsafe extern "system" fn (HWND, UINT, WPARAM, LPARAM) -> LRESULT, h_instance: *mut winapi::shared::minwindef::HINSTANCE__) -> HWND {
-    let wc = WNDCLASSEXW {
-        cbSize: size_of::<WNDCLASSEXW>() as u32,
-        style: 0,
-        lpfnWndProc: Some(wnd_proc),
-        cbClsExtra: 0,
-        cbWndExtra: 0,
-        hInstance: h_instance,
-        hIcon: null_mut(),
-        hCursor: null_mut(),
-        hbrBackground: null_mut(),
-        lpszMenuName: null_mut(),
-        lpszClassName: win32_string(class).as_ptr(),
-        hIconSm: null_mut(),
-    };
-
-    unsafe { RegisterClassExW(&wc); }
-
-    let hwnd: HWND = unsafe { CreateWindowExW(
-            0,
-            win32_string(class).as_ptr(),
-            win32_string(name).as_ptr(),
-            WS_VISIBLE | WS_OVERLAPPEDWINDOW,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            600,
-            600,
-            null_mut(),
-            null_mut(),
-            h_instance,
-            null_mut(),
-    )};
-    if hwnd.is_null() { panic!("failed to create window"); }
-
-    let rid_tlc = RAWINPUTDEVICE {
-        usUsagePage: 1, // HID_USAGE_PAGE_GENERIC
-        usUsage: 6, // HID_USAGE_GENERIC_KEYBOARD
-        dwFlags: RIDEV_NOLEGACY | RIDEV_NOHOTKEYS, // ignores legacy keyboard messages and prevents hotkeys from triggering // TODO check if RIDEV_NOHOTKEYS actually does this lmao
-        hwndTarget: hwnd,
-    };
-
-    unsafe {
-        if RegisterRawInputDevices(&rid_tlc, 1, size_of::<RAWINPUTDEVICE>() as UINT) == 0 {
-            panic!("failed to register raw input TLC");
-        }
-    }
-
-    return hwnd;
-}
-
-fn print_last_win_error() {
-    unsafe {
-        let message_buffer: LPWSTR = null_mut();
-        let error_message_id = GetLastError();
-        let size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-            null_mut(), error_message_id, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT).into(), &message_buffer as *const LPWSTR as LPWSTR, 0, null_mut());
-        let str = OsString::from_wide(std::slice::from_raw_parts(message_buffer, size as usize));
-        println!("GetLastError: {:?}", str);
-        LocalFree(message_buffer as HLOCAL);
-    }
-}
-unsafe extern "system" fn init_devices_wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
-    match i_message {
-        WM_INPUT => {
-            let r = match RawKRecord::new(l_param) {
-                Some(rec) => rec,
-                None => return 0,
-            };
-            if r.k_dir != KDir::Down { return 0;}
-            if (*GLB.keymap_builder).is_filled() { return 0; }
-            (*GLB.keymap_builder).push_d(r.h_dev);
-            if (*GLB.keymap_builder).is_filled() {
-                PostMessageA(null_mut(), WM_USER + 1, 0, 0);
-                DestroyWindow(h_wnd);
-                return 0;
-            }
-            let dev_i = (*GLB.keymap_builder).devs.len();
-            println!("-------- Press any key on the device that should use {} for mappings --------", (*GLB.keymap_builder).files[dev_i]);
-            return 0;
-        },
-        _ => return DefWindowProcW(h_wnd, i_message, w_param, l_param),
-    }
-}
-
-
-unsafe extern "system" fn play_wnd_proc(h_wnd: HWND, i_message: UINT, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
-    match i_message {
-        WM_DESTROY => {
-            PostQuitMessage(0);
-            return 0;
-        },
-        WM_INPUT => {
-            let timer = Instant::now();
-            let r = match RawKRecord::new(l_param) {
-                Some(r) => r,
-                None => return 0,
-            };
-            let notes = match (*GLB.keymap).get(&(r.h_dev, r.v_k_code)) {
-                Some(notes) => notes,
-                None => return 0,
-            };
-            println!("Playing chord: {:?}", notes);
-            (*GLB.midi_handler).process_msg(r, notes);
-            println!("Sent midi msg, took {:?} from input to send", timer.elapsed());
-            return 0;
-        },
-        _ => DefWindowProcW(h_wnd, i_message, w_param, l_param),
-    }
-}
-
-fn win32_string( value : &str ) -> Vec<u16> {
-    use std::{ffi::OsStr, os::windows::prelude::OsStrExt, iter::once};
-    OsStr::new( value ).encode_wide().chain( once( 0 ) ).collect()
 }
