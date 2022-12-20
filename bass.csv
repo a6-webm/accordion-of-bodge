@@ -2,4 +2,3 @@ F3 F4 F5 = one . 75, C3 C4 C5 = two . 75, G3 G4 G5 = three . 75, D3 D4 D5 = four
 Db3 Db4 Db5 = q . 75, Ab3 Ab4 Ab5 = w . 75, Eb3 Eb4 Eb5 = e . 75, Bb3 Bb4 Bb5 = r . 75, F3 F4 F5 = t . 75, C3 C4 C5 = y . 75, G3 G4 G5 = u . 75, D3 D4 D5 = i . 75, A3 A4 A5 = o . 75, E3 E4 E5 = p . 75, B3 B4 B5 = [ . 75,
 Db4M = a . 75, Ab4M = s . 75, Eb4M = d . 75, Bb4M = f . 75, F4M = g . 75, C4M = h . 75, G4M = j . 75, D4M = k . 75, A4M = l . 75, E4M = ; . 75, B4M = ' . 75,
 Db4m = z . 75, Ab4m = x . 75, Eb4m = c . 75, Bb4m = v . 75, F4m = b . 75, C4m = n . 75, G4m = m . 75, D4m = comma . 75, A4m = dot . 75, E4m = / . 75, B4m = shift . 75,
-TOGGLE=`,
