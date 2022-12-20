@@ -261,7 +261,7 @@ fn main() {
 
     unsafe {
         let mut lp_msg: MSG = std::mem::zeroed();
-        println!("-------- Press any key in the window to set device [0], to be assigned mappings from {} --------", (*GLB.keymap_builder).files[0]);
+        println!("-------- Tab into the window and press any key on the device that should use {} for mappings --------", (*GLB.keymap_builder).files[0]);
         while GetMessageW(&mut lp_msg, hwnd, 0, 0) > 0 {
             if lp_msg.message == WM_USER + 1 { break; }
             DispatchMessageW(&lp_msg);
@@ -279,6 +279,8 @@ fn main() {
     unsafe { (*GLB.midi_handler).initialise_key_states(&*GLB.keymap); }
 
     let hwnd = make_window("Accordion of Bodge", "AoB: Play notes", play_wnd_proc, h_instance);
+
+    println!("All devices set! Tab into window and press keys to play");
 
     unsafe {
         let mut lp_msg: MSG = std::mem::zeroed();
@@ -365,8 +367,8 @@ unsafe extern "system" fn init_devices_wnd_proc(h_wnd: HWND, i_message: UINT, w_
                 DestroyWindow(h_wnd);
                 return 0;
             }
-            let i = (*GLB.keymap_builder).devs.len();
-            println!("-------- Press any key in the window to set device [{}], to be assigned mappings from {} --------", i, (*GLB.keymap_builder).files[i]);
+            let dev_i = (*GLB.keymap_builder).devs.len();
+            println!("-------- Press any key on the device that should use {} for mappings --------", (*GLB.keymap_builder).files[dev_i]);
             return 0;
         },
         _ => return DefWindowProcW(h_wnd, i_message, w_param, l_param),
