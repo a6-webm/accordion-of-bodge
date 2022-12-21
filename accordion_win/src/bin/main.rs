@@ -6,6 +6,7 @@ use std::ffi::OsString;
 use std::io::{stdout, stdin, Write};
 use std::mem::size_of;
 use std::os::windows::prelude::OsStringExt;
+use std::process::exit;
 use std::ptr::null_mut;
 use std::time::Instant;
 use std::{env, fs};
@@ -312,22 +313,26 @@ unsafe extern "system" fn play_wnd_proc(h_wnd: HWND, i_message: UINT, w_param: W
 fn main() {
     let args: Vec<String> = env::args().collect();
     for arg in &args[1..] {
-        if arg[arg.len()-4..] != *".csv" { panic!("file '{}' does not end with .csv", arg) }
+        if arg[arg.len()-4..] != *".csv" {
+            println!("Error: File '{}' does not end with .csv", arg);
+            exit(1);
+        }
     }
     let h_instance = unsafe { GetModuleHandleW(null_mut()) };
+    let correct_usage = "------ Correct usage: accordionbodge <alias file> <keymap file>... ------";
 
     // Init globals
     let mut keymap_builder  = KeymapBuilder::new();
     unsafe { GLB.keymap_builder = &mut keymap_builder; }
-    let mut midi_handler = MidiHandler::new().expect("error creating MidiHandler");
+    let mut midi_handler = MidiHandler::new().unwrap_or_else(|e| { println!("Error: {}", e); exit(1); });
     unsafe{ GLB.midi_handler = &mut midi_handler; }
     
     // Populate key_aliases
     let csv_parser = CsvParser::new();
     let mut key_aliases: HashMap<String, USHORT> = HashMap::new();
     {
-        let key_aliases_fp = args.get(1).expect("Correct usage: "); // TODO finish Correct usage
-        let key_aliases_string = fs::read_to_string(key_aliases_fp).expect("Failed to read file: ");
+        let key_aliases_fp = args.get(1).unwrap_or_else(|| { println!("{}", correct_usage); exit(1); });
+        let key_aliases_string = fs::read_to_string(key_aliases_fp).unwrap_or_else(|e| { println!("Error, failed to read file: {}", e); exit(1); });
         let keyaliases_csv = csv_parser.cells_as_vec(key_aliases_string.as_str());
         let mut parse_alias = true; // alternates between parsing an alias and a key code
         let mut alias = "";
@@ -338,23 +343,24 @@ fn main() {
             if parse_alias {
                 alias = s.trim();
             } else {
-                let gp_key: USHORT = s.trim().parse().expect("Key code not a valid number in alias CSV file");
+                let gp_key: USHORT = s.trim().parse().unwrap_or_else(|_| { println!("Error: Key code '{}' not a valid number in alias CSV file '{}'", s.trim(), key_aliases_fp); exit(1); });
                 key_aliases.insert(alias.to_owned(), gp_key.to_owned());
             }
             parse_alias = !parse_alias;
         }
         if !parse_alias {
-            panic!("Alias '{}' has no key code in alias CSV file '{}'", alias, key_aliases_fp);
+            println!("Error: Alias '{}' has no key code in alias CSV file '{}'", alias, key_aliases_fp);
+            exit(1);
         }
     }
 
     // Populate key_map
     let keymap_files: &[String] = &args[2..];
-    if keymap_files.is_empty() { panic!("Correct usage: ") } // TODO finish Correct usage
+    if keymap_files.is_empty() { println!("{}",correct_usage); exit(1); }
     for (i, keymap_fp) in keymap_files.iter().enumerate() {
         unsafe { (*GLB.keymap_builder).push_f(keymap_fp.to_owned()); }
         
-        let keymap_string = fs::read_to_string(keymap_fp).expect("Failed to read file: ");
+        let keymap_string = fs::read_to_string(keymap_fp).unwrap_or_else(|e| { println!("Error, failed to read file: {}", e); exit(1); });
         let keymap_csv = csv_parser.cells_as_vec(keymap_string.as_str());
 
         enum Parse {
@@ -378,16 +384,21 @@ fn main() {
                     let alias = s.trim();
                     key = match key_aliases.get(alias) {
                         Some(s) => *s,
-                        None => alias.parse().unwrap_or_else(|_| panic!("alias '{}' not in aliases.csv and not a number\neither add to aliases.csv or use a correctly formatted number", alias)),
+                        None => alias.parse().unwrap_or_else(|_| {
+                            println!("Error: alias '{}' not in aliases.csv and not a number\neither add to aliases.csv or use a correctly formatted number", alias);
+                            exit(1);
+                        }),
                     };
                     loop_state = Parse::Vel;
                 },
                 Parse::Vel => {
                     let vel: u8 = s.trim()
-                        .parse().unwrap_or_else(|_| panic!("{} is not a valid velocity in {}", s, keymap_fp));
-
-                    let chord = Chord::new(chord_str).expect("Wrong syntax in keymap CSV file")
-                        .to_midi_chord(vel).expect("Error creating chord");
+                        .parse().unwrap_or_else(|_| {
+                            println!("Error: {} is not a valid velocity in {}", s, keymap_fp);
+                            exit(1);
+                        });
+                    let chord = Chord::new(chord_str).unwrap_or_else(|e| { println!("Error, wrong syntax in keymap file {}: {}", keymap_fp, e); exit(1); })
+                        .to_midi_chord(vel).unwrap_or_else(|e| { println!("Error, wrong syntax in keymap file {}: {}", keymap_fp, e); exit(1); });
                     unsafe { (*GLB.keymap_builder).push_km((i as HANDLE, key.to_owned()), chord); };
                     loop_state = Parse::Chord;
                 },
@@ -395,8 +406,8 @@ fn main() {
         }
         match loop_state {
             Parse::Chord => (),
-            Parse::Key => panic!("Chord '{}' has no key specified after it in {}", chord_str, keymap_fp),
-            Parse::Vel => panic!("no velocity specified after '{},{}' in {}", chord_str, key, keymap_fp),
+            Parse::Key => { println!("Error: Chord '{}' has no key specified after it in {}", chord_str, keymap_fp); exit(1); },
+            Parse::Vel => { println!("Error: No velocity specified after '{},{}' in {}", chord_str, key, keymap_fp); exit(1); },
         }
     }
 
