@@ -310,7 +310,10 @@ unsafe extern "system" fn play_wnd_proc(h_wnd: HWND, i_message: UINT, w_param: W
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect(); // TODO error if file does not end with .csv
+    let args: Vec<String> = env::args().collect();
+    for arg in &args[1..] {
+        if arg[arg.len()-4..] != *".csv" { panic!("file '{}' does not end with .csv", arg) }
+    }
     let h_instance = unsafe { GetModuleHandleW(null_mut()) };
 
     // Init globals
@@ -323,17 +326,25 @@ fn main() {
     let csv_parser = CsvParser::new();
     let mut key_aliases: HashMap<String, USHORT> = HashMap::new();
     {
-        let key_aliases_fp = args.get(1).expect("Correct usage: "); //TODO allow ommission of this parameter // TODO finish Correct usage
+        let key_aliases_fp = args.get(1).expect("Correct usage: "); // TODO finish Correct usage
         let key_aliases_string = fs::read_to_string(key_aliases_fp).expect("Failed to read file: ");
         let keyaliases_csv = csv_parser.cells_as_vec(key_aliases_string.as_str());
+        let mut parse_alias = true; // alternates between parsing an alias and a key code
+        let mut alias = "";
         for s in keyaliases_csv.iter() {
             if s.trim().is_empty() { // Ignore strings of whitespace
                 continue;
             }
-            let mut iter = s.splitn(2, '=');
-            let alias = iter.next().expect("Missing alias and key data in alias CSV file").trim();
-            let gp_key: USHORT = iter.next().expect("Missing alias or key data in alias CSV file").trim().parse().expect("Wrong syntax in alias CSV file");
-            key_aliases.insert(alias.to_owned(), gp_key.to_owned());
+            if parse_alias {
+                alias = s.trim();
+            } else {
+                let gp_key: USHORT = s.trim().parse().expect("Key code not a valid number in alias CSV file");
+                key_aliases.insert(alias.to_owned(), gp_key.to_owned());
+            }
+            parse_alias = !parse_alias;
+        }
+        if !parse_alias {
+            panic!("Alias '{}' has no key code in alias CSV file '{}'", alias, key_aliases_fp);
         }
     }
 
@@ -345,25 +356,47 @@ fn main() {
         
         let keymap_string = fs::read_to_string(keymap_fp).expect("Failed to read file: ");
         let keymap_csv = csv_parser.cells_as_vec(keymap_string.as_str());
-        
+
+        enum Parse {
+            Chord,
+            Key,
+            Vel,
+        }
+        let mut loop_state = Parse::Chord;
+        let mut chord_str = "";
+        let mut key: USHORT = 0;
         for s in keymap_csv.iter() {
             if s.trim().is_empty() { // Ignore strings of whitespace
                 continue;
             }
-            let mut iter = s.splitn(3, |c| c == '=' || c == '.');
+            match loop_state {
+                Parse::Chord => {
+                    chord_str = s.trim();
+                    loop_state = Parse::Key;
+                },
+                Parse::Key => {
+                    let alias = s.trim();
+                    key = match key_aliases.get(alias) {
+                        Some(s) => *s,
+                        None => alias.parse().unwrap_or_else(|_| panic!("alias '{}' not in aliases.csv and not a number\neither add to aliases.csv or use a correctly formatted number", alias)),
+                    };
+                    loop_state = Parse::Vel;
+                },
+                Parse::Vel => {
+                    let vel: u8 = s.trim()
+                        .parse().unwrap_or_else(|_| panic!("{} is not a valid velocity in {}", s, keymap_fp));
 
-            let chord_str = iter.next().expect("Wrong syntax in keymap CSV file").trim();
-            let alias = iter.next().expect("Wrong syntax in keymap CSV file").trim();
-            let key: USHORT = match key_aliases.get(alias) {
-                Some(s) => *s,
-                None => alias.parse().expect("alias not in aliases.csv and not a number\neither add to aliases.csv or use a correctly formatted number"),
-            };
-            let vel: u8 = iter.next().expect("Wrong syntax in keymap CSV file").trim()
-                .parse().expect("Wrong syntax in keymap CSV file"); // TODO More descriptive error messages?
-            let chord = Chord::new(chord_str).expect("Wrong syntax in keymap CSV file")
-                .to_midi_chord(vel).expect("Error creating chord");
-            
-            unsafe { (*GLB.keymap_builder).push_km((i as HANDLE, key.to_owned()), chord); };
+                    let chord = Chord::new(chord_str).expect("Wrong syntax in keymap CSV file")
+                        .to_midi_chord(vel).expect("Error creating chord");
+                    unsafe { (*GLB.keymap_builder).push_km((i as HANDLE, key.to_owned()), chord); };
+                    loop_state = Parse::Chord;
+                },
+            }
+        }
+        match loop_state {
+            Parse::Chord => (),
+            Parse::Key => panic!("Chord '{}' has no key specified after it in {}", chord_str, keymap_fp),
+            Parse::Vel => panic!("no velocity specified after '{},{}' in {}", chord_str, key, keymap_fp),
         }
     }
 
@@ -398,5 +431,4 @@ fn main() {
             DispatchMessageW(&lp_msg);
         }
     }
-
 }

@@ -1,4 +1,4 @@
-Eb5 = one . 100,Gb5 = two . 100,A5 = three . 100,C6 = four . 100,Eb6  = five . 100,Gb6 = six . 100,A6 = seven . 100,C7 = eight . 100,Eb7 = nine . 100,Gb7 = zero . 100,A7 = - . 100,
-E5 = q . 100,G5 = w . 100,Bb5 = e . 100,Db6 = r . 100,E6 = t . 100,G6 = y . 100,Bb6 = u . 100,Db7 = i . 100,E7 = o . 100,G7 = p . 100,Bb7 = [ . 100,
-F5 = a . 100,Ab5 = s . 100,B5 = d . 100,D6 = f . 100,F6 = g . 100,Ab6 = h . 100,B6 = j . 100,D7 = k . 100,F7 = l . 100,Ab7 = ; . 100,B7 = ' . 100,
-Gb5 = z . 100,A5 = x . 100,C6 = c . 100,Eb6 = v . 100,Gb6 = b . 100,A6 = n . 100,C7 = m . 100,Eb7 = comma . 100,Gb7 = dot . 100,A7 = / . 100,C8 = shift . 100,
+Eb5,one,100,  Gb5,two,100,  A5,three,100,  C6,four,100,  Eb6 ,five,100,  Gb6,six,100,  A6,seven,100,  C7,eight,100,  Eb7,nine,100,  Gb7,zero,100,  A7,-,100,  
+E5,q,100,  G5,w,100,  Bb5,e,100,  Db6,r,100,  E6,t,100,  G6,y,100,  Bb6,u,100,  Db7,i,100,  E7,o,100,  G7,p,100,  Bb7,[,100,  
+F5,a,100,  Ab5,s,100,  B5,d,100,  D6,f,100,  F6,g,100,  Ab6,h,100,  B6,j,100,  D7,k,100,  F7,l,100,  Ab7,;,100,  B7,',100,  
+Gb5,z,100,  A5,x,100,  C6,c,100,  Eb6,v,100,  Gb6,b,100,  A6,n,100,  C7,m,100,  Eb7,comma,100,  Gb7,.,100,  A7,/,100,  C8,shift,100,  
