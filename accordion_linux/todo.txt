@@ -1,0 +1,14 @@
+Plan:
+evdev is gonna grab devices so no events get sent anywhere else
+need to implement toggle to grab and ungrab devices
+
+no aliases.csv
+
+keymap.csv is gonna be String,Chord,Vel
+    we gonna parse the string with Key::from_str(\)
+
+event reading gonna have to be {
+    read key event
+        if value = 0, key was released
+        if value = 1, key was pressed
+}
