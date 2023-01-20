@@ -16,7 +16,14 @@ event reading gonna have to be {
 
 what code:
 make [(dev_path,kmap_path)]
-make [(devices, kmap)]
-main loop{
-    for each device ????
-}
+make [kmap]
+
+toggle on:
+    make devices[]
+    combine into [(device, kmap)]
+    main loop{
+        for each device:
+            devices.fetch_events()
+            play(kmap[event])
+toggle off:
+    close devices (think this just means make sure they're freed)
