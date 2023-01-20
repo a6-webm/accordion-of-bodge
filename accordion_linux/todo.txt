@@ -12,3 +12,11 @@ event reading gonna have to be {
         if value = 0, key was released
         if value = 1, key was pressed
 }
+
+
+what code:
+make [(dev_path,kmap_path)]
+make [(devices, kmap)]
+main loop{
+    for each device ????
+}
