@@ -1,121 +1,130 @@
-use std::{collections::HashMap, env, fmt::Display, fs, process::exit};
+use chord_parser::{Chord, ChordError, CsvParser, MidiNote};
+use std::{collections::HashMap, env, error::Error, fmt::Display, fs, io, process::exit};
 
-use chord_parser::CsvParser;
+type Kmap = HashMap<u16, Vec<MidiNote>>;
 
 #[derive(Debug)]
-enum AccErr {
-    NoArgs,
+enum AccError {
     ArgsNoKmap,
+    IOError(io::Error),
+    InvChord(ChordError),
+    InvKeyName(String),
+    InvVelocity(String),
+    NoArgs,
+    NoKey(String),
+    NoVel(String),
 }
 
-impl Display for AccErr {
+use evdev::Key;
+use AccError::*;
+
+impl Display for AccError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AccErr::NoArgs => write!(f, "uh idk lol"),
-            AccErr::ArgsNoKmap => todo!(),
-        }
+        write!(f, "")
     }
 }
 
-fn main() -> Result<(), AccErr> {
+impl Error for AccError {}
+
+fn parse_to_kmap(kmap_csv: Vec<String>) -> Result<Kmap, AccError> {
+    let mut out: Kmap = Default::default();
+    let trim_kmap_csv: Vec<&str> = kmap_csv
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    enum P {
+        Chord,
+        Key,
+        Vel,
+    }
+    let mut loop_state = P::Chord;
+    let mut chord_str = "";
+    let mut code: u16 = 0;
+    for s in trim_kmap_csv.iter() {
+        match loop_state {
+            P::Chord => {
+                chord_str = s;
+                loop_state = P::Key;
+            }
+            P::Key => {
+                let key: Key = s.parse().map_err(|_| InvKeyName(s.to_string()))?;
+                code = key.code();
+                loop_state = P::Vel;
+            }
+            P::Vel => {
+                let vel: u8 = s.parse().map_err(|_| InvVelocity(s.to_string()))?;
+                let midi_chord = Chord::new(chord_str)
+                    .map_err(|e| InvChord(e))?
+                    .to_midi_chord(vel)
+                    .map_err(|e| InvChord(e))?;
+                out.insert(code, midi_chord);
+                loop_state = P::Chord;
+            }
+        }
+    }
+    match loop_state {
+        P::Chord => Ok(out),
+        P::Key => Err(NoKey(
+            trim_kmap_csv
+                .last()
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
+        )),
+        P::Vel => Err(NoKey(format!(
+            "{},{}",
+            trim_kmap_csv
+                .get(trim_kmap_csv.len() - 2)
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
+            trim_kmap_csv
+                .last()
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
+        ))),
+    }
+}
+
+fn program() -> Result<(), AccError> {
     let correct_usage = "------ Correct usage: accordionbodge <alias file> <keymap file>... ------";
     let args: Vec<String> = env::args().collect();
 
-    let devs_and_kmap_paths: Vec<(String, String)> = Vec::new();
-    let iter = args.iter();
-    let next = iter.next();
+    let mut devs_and_kmap_paths: Vec<(String, String)> = Vec::new();
+    let mut iter = args.iter();
+    let mut next = iter.next();
     if next.is_none() {
-        return Err(AccErr::NoArgs);
+        Err(NoArgs)?;
     }
-    while (next.is_some()) {
+    while next.is_some() {
         let dev_path = next.unwrap();
         next = iter.next();
-        let kmap_path = next.ok_or(AccErr::ArgsNoKmap)?;
-        devs_and_kmap_paths.push((dev_path, kmap_path));
+        let kmap_path = next.ok_or(ArgsNoKmap)?;
+        devs_and_kmap_paths.push((dev_path.to_owned(), kmap_path.to_owned()));
         next = iter.next();
     }
 
     let csv_parser = CsvParser::new();
 
-    // Populate key_map
-    // let keymap_files: &[String] = &args[1..];
-    // if keymap_files.is_empty() {
-    //     println!("{}", correct_usage);
-    //     exit(1);
-    // }
-    // for (i, keymap_fp) in keymap_files.iter().enumerate() {
-    //     unsafe {
-    //         (*GLB.keymap_builder).push_f(keymap_fp.to_owned());
-    //     }
-
-    //     let keymap_string = fs::read_to_string(keymap_fp).unwrap_or_else(|e| {
-    //         println!("Error, failed to read file: {}", e);
-    //         exit(1);
-    //     });
-    //     let keymap_csv = csv_parser.cells_as_vec(keymap_string.as_str());
-
-    //     enum Parse {
-    //         Chord,
-    //         Key,
-    //         Vel,
-    //     }
-    //     let mut loop_state = Parse::Chord;
-    //     let mut chord_str = "";
-    //     let mut s_code: u32 = 0;
-    //     for s in keymap_csv.iter() {
-    //         if s.trim().is_empty() {
-    //             // Ignore strings of whitespace
-    //             continue;
-    //         }
-    //         match loop_state {
-    //             Parse::Chord => {
-    //                 chord_str = s.trim();
-    //                 loop_state = Parse::Key;
-    //             }
-    //             Parse::Key => {
-    //                 s_code = s.trim();
-    //                 loop_state = Parse::Vel;
-    //             }
-    //             Parse::Vel => {
-    //                 let vel: u8 = s.trim().parse().unwrap_or_else(|_| {
-    //                     println!("Error: {} is not a valid velocity in {}", s, keymap_fp);
-    //                     exit(1);
-    //                 });
-    //                 let chord = Chord::new(chord_str)
-    //                     .unwrap_or_else(|e| {
-    //                         println!("Error, wrong syntax in keymap file {}: {}", keymap_fp, e);
-    //                         exit(1);
-    //                     })
-    //                     .to_midi_chord(vel)
-    //                     .unwrap_or_else(|e| {
-    //                         println!("Error, wrong syntax in keymap file {}: {}", keymap_fp, e);
-    //                         exit(1);
-    //                     });
-    //                 unsafe {
-    //                     (*GLB.keymap_builder).push_km((i as HANDLE, s_code.to_owned()), chord);
-    //                 };
-    //                 loop_state = Parse::Chord;
-    //             }
-    //         }
-    //     }
-    //     match loop_state {
-    //         Parse::Chord => (),
-    //         Parse::Key => {
-    //             println!(
-    //                 "Error: Chord '{}' has no scancode specified after it in {}",
-    //                 chord_str, keymap_fp
-    //             );
-    //             exit(1);
-    //         }
-    //         Parse::Vel => {
-    //             println!(
-    //                 "Error: No velocity specified after '{},{}' in {}",
-    //                 chord_str, key, keymap_fp
-    //             );
-    //             exit(1);
-    //         }
-    //     }
-    // }
+    let mut kmaps: Vec<Kmap> = Vec::new();
+    for (_, kmap_path) in devs_and_kmap_paths {
+        let kmap_str = fs::read_to_string(kmap_path).map_err(|e| IOError(e))?;
+        let kmap_csv = csv_parser.cells_as_vec(&kmap_str);
+        let kmap = parse_to_kmap(kmap_csv)?;
+        kmaps.push(kmap);
+    }
 
     loop {}
+}
+
+fn main() {
+    // if let Err(e) = program() {
+    //     match e {
+    //         NoArgs => todo!(), // write error messages to stderr
+    //         ArgsNoKmap => todo!(),
+    //         InvKeyName => todo!(),
+    //         IOError(_) => todo!(),
+    //     }
+    //     exit(1);
+    // }
+    program(); // ONLY HERE SO I CAN DEBUG, REMOVE LATER
 }
