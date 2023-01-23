@@ -16,14 +16,18 @@ event reading gonna have to be {
 
 what code:
 make [(dev_path,kmap_path)]
-make [kmap]
+make [MappedDev]
 
 toggle on:
-    make devices[]
-    combine into [(device, kmap)]
-    main loop{
+    loop{
         for each device:
             devices.fetch_events()
-            play(kmap[event])
+            if toggle, toggle off
+            else play(kmap[event])
+    }
 toggle off:
-    close devices (think this just means make sure they're freed)
+    loop{
+        for each device:
+            devices.fetch_events()
+            if it's a toggle, toggle on
+    }
