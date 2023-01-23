@@ -1,12 +1,29 @@
 use chord_parser::{Chord, ChordError, CsvParser, MidiNote};
-use std::{collections::HashMap, env, error::Error, fmt::Display, fs, io, process::exit};
+use evdev::{Device, EventType, Key};
+use midir::{os::unix::VirtualOutput, MidiOutput, MidiOutputConnection};
+use nix::{
+    errno::Errno,
+    fcntl::{fcntl, FcntlArg, OFlag},
+};
+use std::{
+    collections::HashMap, env, error::Error, fmt::Display, fs, io, os::unix::prelude::AsRawFd,
+    process::exit,
+};
 
-type Kmap = HashMap<u16, Vec<MidiNote>>;
+const NOTE_ON_MSG: u8 = 0x90;
+const NOTE_OFF_MSG: u8 = 0x80;
+
+type KCode = u16;
+type Kmap = HashMap<KCode, Vec<MidiNote>>;
 
 #[derive(Debug)]
 enum AccError {
+    ArgError(io::Error),
+    MidiError(),
     ArgsNoKmap,
-    IOError(io::Error),
+    DeviceFail(io::Error),
+    DeviceOpenFail(io::Error),
+    DeviceFDFail(Errno),
     InvChord(ChordError),
     InvKeyName(String),
     InvVelocity(String),
@@ -14,8 +31,6 @@ enum AccError {
     NoKey(String),
     NoVel(String),
 }
-
-use evdev::Key;
 use AccError::*;
 
 impl Display for AccError {
@@ -26,8 +41,52 @@ impl Display for AccError {
 
 impl Error for AccError {}
 
-fn parse_to_kmap(kmap_csv: Vec<String>) -> Result<Kmap, AccError> {
-    let mut out: Kmap = Default::default();
+struct MappedDev {
+    hndl: Device,
+    kmap: Kmap,
+    toggles: Vec<KCode>,
+}
+
+struct MidiHandler {
+    played_notes: Vec<u8>,
+    conn_out: MidiOutputConnection,
+}
+
+impl MidiHandler {
+    fn new() -> Result<MidiHandler, AccError> {
+        let midi_out = MidiOutput::new("Accordion_of_Bodge_midi_out").map_err(|_| MidiError())?;
+        let conn_out = midi_out
+            .create_virtual("Accordion_of_Bodge")
+            .map_err(|_| MidiError())?;
+        Ok(MidiHandler {
+            played_notes: vec![0; 128],
+            conn_out,
+        })
+    }
+
+    fn play(&mut self, chord: &Vec<MidiNote>) {
+        for note in chord {
+            self.played_notes[note.n as usize] += 1;
+            if self.played_notes[note.n as usize] == 1 {
+                self.conn_out.send(&[NOTE_ON_MSG, note.n, note.vel]);
+            }
+        }
+    }
+
+    fn release(&mut self, chord: &Vec<MidiNote>) {
+        for note in chord {
+            if self.played_notes[note.n as usize] != 0 {
+                self.played_notes[note.n as usize] -= 1;
+            }
+            if self.played_notes[note.n as usize] == 0 {
+                self.conn_out.send(&[NOTE_OFF_MSG, note.n, note.vel]);
+            }
+        }
+    }
+}
+
+fn parse_to_kmap_and_toggles(kmap_csv: Vec<String>) -> Result<(Kmap, Vec<KCode>), AccError> {
+    let mut out: (Kmap, Vec<KCode>) = Default::default();
     let trim_kmap_csv: Vec<&str> = kmap_csv
         .iter()
         .map(|s| s.trim())
@@ -40,7 +99,7 @@ fn parse_to_kmap(kmap_csv: Vec<String>) -> Result<Kmap, AccError> {
     }
     let mut loop_state = P::Chord;
     let mut chord_str = "";
-    let mut code: u16 = 0;
+    let mut code: KCode = 0;
     for s in trim_kmap_csv.iter() {
         match loop_state {
             P::Chord => {
@@ -50,7 +109,12 @@ fn parse_to_kmap(kmap_csv: Vec<String>) -> Result<Kmap, AccError> {
             P::Key => {
                 let key: Key = s.parse().map_err(|_| InvKeyName(s.to_string()))?;
                 code = key.code();
-                loop_state = P::Vel;
+                if chord_str == "TOGGLE" {
+                    out.1.push(code);
+                    loop_state = P::Chord;
+                } else {
+                    loop_state = P::Vel;
+                }
             }
             P::Vel => {
                 let vel: u8 = s.parse().map_err(|_| InvVelocity(s.to_string()))?;
@@ -58,7 +122,7 @@ fn parse_to_kmap(kmap_csv: Vec<String>) -> Result<Kmap, AccError> {
                     .map_err(|e| InvChord(e))?
                     .to_midi_chord(vel)
                     .map_err(|e| InvChord(e))?;
-                out.insert(code, midi_chord);
+                out.0.insert(code, midi_chord);
                 loop_state = P::Chord;
             }
         }
@@ -71,7 +135,7 @@ fn parse_to_kmap(kmap_csv: Vec<String>) -> Result<Kmap, AccError> {
                 .map(|s| s.to_string())
                 .unwrap_or_default(),
         )),
-        P::Vel => Err(NoKey(format!(
+        P::Vel => Err(NoVel(format!(
             "{},{}",
             trim_kmap_csv
                 .get(trim_kmap_csv.len() - 2)
@@ -85,15 +149,24 @@ fn parse_to_kmap(kmap_csv: Vec<String>) -> Result<Kmap, AccError> {
     }
 }
 
+static USAGE: &'static str = "
+Usage: accordionbodge [options] <alias-file> <keymap-file>
+       accordionbodge --help
+
+Options:
+    -h, --help     Show this usage message.
+";
+
 fn program() -> Result<(), AccError> {
-    let correct_usage = "------ Correct usage: accordionbodge <alias file> <keymap file>... ------";
     let args: Vec<String> = env::args().collect();
+
+    let mut midi_handler = MidiHandler::new()?;
 
     let mut devs_and_kmap_paths: Vec<(String, String)> = Vec::new();
     let mut iter = args.iter();
     let mut next = iter.next();
     if next.is_none() {
-        Err(NoArgs)?;
+        return Err(NoArgs);
     }
     while next.is_some() {
         let dev_path = next.unwrap();
@@ -105,15 +178,75 @@ fn program() -> Result<(), AccError> {
 
     let csv_parser = CsvParser::new();
 
-    let mut kmaps: Vec<Kmap> = Vec::new();
-    for (_, kmap_path) in devs_and_kmap_paths {
-        let kmap_str = fs::read_to_string(kmap_path).map_err(|e| IOError(e))?;
+    let mut mapped_devs: Vec<MappedDev> = Vec::new();
+    for (dev_path, kmap_path) in devs_and_kmap_paths {
+        let device = Device::open(dev_path).map_err(|e| DeviceOpenFail(e))?;
+        let raw_fd = device.as_raw_fd();
+        fcntl(raw_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).map_err(|e| DeviceFDFail(e))?;
+        let kmap_str = fs::read_to_string(kmap_path).map_err(|e| ArgError(e))?;
         let kmap_csv = csv_parser.cells_as_vec(&kmap_str);
-        let kmap = parse_to_kmap(kmap_csv)?;
-        kmaps.push(kmap);
+        let (kmap, toggles) = parse_to_kmap_and_toggles(kmap_csv)?;
+        mapped_devs.push(MappedDev {
+            hndl: device,
+            kmap,
+            toggles,
+        });
     }
 
-    loop {}
+    loop {
+        for dev in mapped_devs.iter_mut() {
+            dev.hndl.grab().map_err(|e| DeviceFail(e))?;
+        }
+        'on: loop {
+            for dev in mapped_devs.iter_mut() {
+                match dev.hndl.fetch_events() {
+                    Ok(ev_iter) => {
+                        for ev in ev_iter {
+                            if ev.event_type() != EventType::KEY {
+                                continue;
+                            }
+                            if dev.toggles.contains(&ev.code()) {
+                                break 'on;
+                            }
+                            if let Some(chord) = dev.kmap.get(&ev.code()) {
+                                if ev.value() == 1 {
+                                    midi_handler.play(chord);
+                                }
+                                if ev.value() == 0 {
+                                    midi_handler.release(chord);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        continue;
+                    }
+                    Err(e) => return Err(DeviceFail(e)),
+                }
+            }
+        }
+        for dev in mapped_devs.iter_mut() {
+            dev.hndl.ungrab().map_err(|e| DeviceFail(e))?;
+        }
+        'off: loop {
+            for dev in mapped_devs.iter_mut() {
+                match dev.hndl.fetch_events() {
+                    Ok(ev_iter) => {
+                        for ev in ev_iter {
+                            if ev.event_type() == EventType::KEY && dev.toggles.contains(&ev.code())
+                            {
+                                break 'off;
+                            }
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        continue;
+                    }
+                    Err(e) => return Err(DeviceFail(e)),
+                }
+            }
+        }
+    }
 }
 
 fn main() {

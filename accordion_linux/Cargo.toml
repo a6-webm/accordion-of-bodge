@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 chord_parser = { path = "../chord_parser" }
 evdev = "0.12.1"
+nix = "0.26.2"
+midir = "0.9.0"
