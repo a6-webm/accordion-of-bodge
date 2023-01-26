@@ -1,18 +1,30 @@
 # Accordion of Bodge
-Accordion of Bodge is a windows program that can let you bind most keys on your keyboard to play any number of midi notes.
+Accordion of Bodge is a program that binds keys on your keyboard (or keyboards!) to play midi notes.
+#### [Windows info](https://github.com/a6-webm/accordion-of-bodge/edit/updating-readme/README.md#on-windows)
+#### [Linux info](https://github.com/a6-webm/accordion-of-bodge/edit/updating-readme/README.md#on-linux)
 
-Full disclosure, this code certainly accomplishes something, but that something is not polished even a little bit, so be warned.
-
-# Building
-Download the source code and run `cargo build` in the `\accordion_win` or `\accordion_linux` folder.
-
-# Running
-You can add CSVs for as many keyboards as you want, but there must be at least one CSV for aliases and one CSV for a key presses to midi.
-
-```powershell
-cargo run -- aliases.csv cgriff.csv bass.csv
+## On Windows
+### Usage
 ```
-will make two keyboards act like a chromatic button accordion.
+Usage:
+  acc-bodge [-h | --help] <alias-file> (<keymap-file>...)
 
-# Use
-*exercise left for the reader*
+Options:
+  -h, --help   Show this screen
+```
+
+### Building
+Download the source code and run `cargo build` in the `\accordion_win` folder.
+
+## On Linux
+### Usage
+```
+Usage:
+  acc-bodge [-h | --help] (<evdev-device-file> <keymap-file>...)
+  
+Options:
+  -h, --help   Show this screen
+```
+
+### Building
+Download the source code and run `cargo build` in the `\accordion_linux` folder.
