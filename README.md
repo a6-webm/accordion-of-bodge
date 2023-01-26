@@ -5,21 +5,26 @@ Accordion of Bodge is a program that binds keys on your keyboard (or keyboards!)
 
 ## On Windows
 ### Usage
-// TODO
+```
+Usage:
+  acc-bodge [-h | --help] <alias-file> (<keymap-file>...)
+
+Options:
+  -h, --help   Show this screen
+```
 
 ### Building
 Download the source code and run `cargo build` in the `\accordion_win` folder.
 
-You can add CSVs for as many keyboards as you want, but there must be at least one CSV for aliases and one CSV for a key presses to midi.
-
-```powershell
-cargo run -- aliases.csv cgriff.csv bass.csv
-```
-will make two keyboards act like a chromatic button accordion.
-
 ## On Linux
 ### Usage
-// TODO
+```
+Usage:
+  acc-bodge [-h | --help] (<evdev-device-file> <keymap-file>...)
+  
+Options:
+  -h, --help   Show this screen
+```
 
 ### Building
 Download the source code and run `cargo build` in the `\accordion_linux` folder.
