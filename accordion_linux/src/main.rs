@@ -68,7 +68,8 @@ impl MidiHandler {
         for note in chord {
             self.played_notes[note.n as usize] += 1;
             if self.played_notes[note.n as usize] == 1 {
-                self.conn_out.send(&[NOTE_ON_MSG, note.n, note.vel]);
+                self.conn_out.send(&[NOTE_ON_MSG, note.n, note.vel]).ok();
+                println!("played note: {} with vel: {}", note.n, note.vel);
             }
         }
     }
@@ -79,7 +80,8 @@ impl MidiHandler {
                 self.played_notes[note.n as usize] -= 1;
             }
             if self.played_notes[note.n as usize] == 0 {
-                self.conn_out.send(&[NOTE_OFF_MSG, note.n, note.vel]);
+                self.conn_out.send(&[NOTE_OFF_MSG, note.n, note.vel]).ok();
+                println!("released note: {} with vel: {}", note.n, note.vel);
             }
         }
     }
@@ -150,11 +152,11 @@ fn parse_to_kmap_and_toggles(kmap_csv: Vec<String>) -> Result<(Kmap, Vec<KCode>)
 }
 
 static USAGE: &'static str = "
-Usage: accordionbodge [options] <alias-file> <keymap-file>
-       accordionbodge --help
-
+Usage:
+  acc-bodge [-h | --help] (<evdev-device-file> <keymap-file>...)
+  
 Options:
-    -h, --help     Show this usage message.
+  -h, --help   Show this screen
 ";
 
 fn program() -> Result<(), AccError> {
@@ -164,9 +166,14 @@ fn program() -> Result<(), AccError> {
 
     let mut devs_and_kmap_paths: Vec<(String, String)> = Vec::new();
     let mut iter = args.iter();
-    let mut next = iter.next();
-    if next.is_none() {
-        return Err(NoArgs);
+    let mut next = iter.nth(1);
+    match next {
+        Some(s) if s == "-h" || s == "--help" => {
+            println!("{}", USAGE);
+            exit(0);
+        }
+        None => return Err(NoArgs),
+        _ => (),
     }
     while next.is_some() {
         let dev_path = next.unwrap();
@@ -193,10 +200,38 @@ fn program() -> Result<(), AccError> {
         });
     }
 
+    let mut prev_toggle_key: Option<KCode> = None;
     loop {
+        'off: loop {
+            for dev in mapped_devs.iter_mut() {
+                match dev.hndl.fetch_events() {
+                    Ok(ev_iter) => {
+                        for ev in ev_iter {
+                            if ev.event_type() == EventType::KEY && dev.toggles.contains(&ev.code())
+                            {
+                                if ev.value() == 1 {
+                                    prev_toggle_key = Some(ev.code());
+                                } else if ev.value() == 0 {
+                                    if prev_toggle_key == Some(ev.code()) {
+                                        prev_toggle_key = None;
+                                        break 'off;
+                                    }
+                                    prev_toggle_key = None;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        continue;
+                    }
+                    Err(e) => return Err(DeviceFail(e)),
+                }
+            }
+        }
         for dev in mapped_devs.iter_mut() {
             dev.hndl.grab().map_err(|e| DeviceFail(e))?;
         }
+        println!("devices grabbed, playing on");
         'on: loop {
             for dev in mapped_devs.iter_mut() {
                 match dev.hndl.fetch_events() {
@@ -206,8 +241,17 @@ fn program() -> Result<(), AccError> {
                                 continue;
                             }
                             if dev.toggles.contains(&ev.code()) {
-                                break 'on;
+                                if ev.value() == 1 {
+                                    prev_toggle_key = Some(ev.code());
+                                } else if ev.value() == 0 {
+                                    if prev_toggle_key == Some(ev.code()) {
+                                        prev_toggle_key = None;
+                                        break 'on;
+                                    }
+                                    prev_toggle_key = None;
+                                }
                             }
+
                             if let Some(chord) = dev.kmap.get(&ev.code()) {
                                 if ev.value() == 1 {
                                     midi_handler.play(chord);
@@ -228,36 +272,13 @@ fn program() -> Result<(), AccError> {
         for dev in mapped_devs.iter_mut() {
             dev.hndl.ungrab().map_err(|e| DeviceFail(e))?;
         }
-        'off: loop {
-            for dev in mapped_devs.iter_mut() {
-                match dev.hndl.fetch_events() {
-                    Ok(ev_iter) => {
-                        for ev in ev_iter {
-                            if ev.event_type() == EventType::KEY && dev.toggles.contains(&ev.code())
-                            {
-                                break 'off;
-                            }
-                        }
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        continue;
-                    }
-                    Err(e) => return Err(DeviceFail(e)),
-                }
-            }
-        }
+        println!("devices released, playing off");
     }
 }
 
 fn main() {
-    // if let Err(e) = program() {
-    //     match e {
-    //         NoArgs => todo!(), // write error messages to stderr
-    //         ArgsNoKmap => todo!(),
-    //         InvKeyName => todo!(),
-    //         IOError(_) => todo!(),
-    //     }
-    //     exit(1);
-    // }
-    program(); // ONLY HERE SO I CAN DEBUG, REMOVE LATER
+    if let Err(e) = program() {
+        println!("{:?}", e);
+        exit(1);
+    }
 }

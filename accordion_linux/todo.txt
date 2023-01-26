@@ -31,3 +31,5 @@ toggle off:
             devices.fetch_events()
             if it's a toggle, toggle on
     }
+
+implement making sure that all keys are up before switching mode
