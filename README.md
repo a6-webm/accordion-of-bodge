@@ -1,7 +1,7 @@
 # Accordion of Bodge
 Accordion of Bodge is a program that binds keys on your keyboard (or keyboards!) to play midi notes.
-#### [Windows info](https://github.com/a6-webm/accordion-of-bodge/edit/updating-readme/README.md#on-windows)
-#### [Linux info](https://github.com/a6-webm/accordion-of-bodge/edit/updating-readme/README.md#on-linux)
+#### [Windows info](https://github.com/a6-webm/accordion-of-bodge#on-windows)
+#### [Linux info](https://github.com/a6-webm/accordion-of-bodge#on-linux)
 
 ## On Windows
 ### Usage
