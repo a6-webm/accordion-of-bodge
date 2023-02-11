@@ -21,6 +21,7 @@ enum AccError {
     ArgError(io::Error),
     MidiError(),
     ArgsNoKmap,
+    DeviceNoKeys,
     DeviceFail(io::Error),
     DeviceOpenFail(io::Error),
     DeviceFDFail(Errno),
@@ -151,6 +152,34 @@ fn parse_to_kmap_and_toggles(kmap_csv: Vec<String>) -> Result<(Kmap, Vec<KCode>)
     }
 }
 
+fn wait_until_keys_released(mapped_devs: &mut Vec<MappedDev>) -> Result<(), AccError> {
+    let mut released_devs = 0;
+    while released_devs != mapped_devs.len() {
+        released_devs = 0;
+        for dev in mapped_devs.iter_mut() {
+            match dev.hndl.fetch_events() {
+                Ok(ev_iter) => for _ in ev_iter {},
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    continue;
+                }
+                Err(e) => return Err(DeviceFail(e)),
+            }
+            print!("keys pressed: ");
+            dev.hndl
+                .cached_state()
+                .key_vals()
+                .unwrap()
+                .iter()
+                .for_each(|x| print!("{} ", x.code()));
+            println!();
+            if dev.hndl.cached_state().key_vals().unwrap().iter().count() == 0 {
+                released_devs += 1;
+            }
+        }
+    }
+    return Ok(());
+}
+
 static USAGE: &'static str = "
 Usage:
   acc-bodge [-h | --help] (<evdev-device-file> <keymap-file>...)
@@ -188,6 +217,9 @@ fn program() -> Result<(), AccError> {
     let mut mapped_devs: Vec<MappedDev> = Vec::new();
     for (dev_path, kmap_path) in devs_and_kmap_paths {
         let device = Device::open(dev_path).map_err(|e| DeviceOpenFail(e))?;
+        if !device.supported_events().contains(EventType::KEY) {
+            return Err(DeviceNoKeys);
+        }
         let raw_fd = device.as_raw_fd();
         fcntl(raw_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).map_err(|e| DeviceFDFail(e))?;
         let kmap_str = fs::read_to_string(kmap_path).map_err(|e| ArgError(e))?;
@@ -200,24 +232,18 @@ fn program() -> Result<(), AccError> {
         });
     }
 
-    let mut prev_toggle_key: Option<KCode> = None;
+    println!("playing off, press a TOGGLE key to start playing");
     loop {
         'off: loop {
             for dev in mapped_devs.iter_mut() {
                 match dev.hndl.fetch_events() {
                     Ok(ev_iter) => {
                         for ev in ev_iter {
-                            if ev.event_type() == EventType::KEY && dev.toggles.contains(&ev.code())
+                            if ev.event_type() == EventType::KEY
+                                && dev.toggles.contains(&ev.code())
+                                && ev.value() == 1
                             {
-                                if ev.value() == 1 {
-                                    prev_toggle_key = Some(ev.code());
-                                } else if ev.value() == 0 {
-                                    if prev_toggle_key == Some(ev.code()) {
-                                        prev_toggle_key = None;
-                                        break 'off;
-                                    }
-                                    prev_toggle_key = None;
-                                }
+                                break 'off;
                             }
                         }
                     }
@@ -228,6 +254,7 @@ fn program() -> Result<(), AccError> {
                 }
             }
         }
+        wait_until_keys_released(&mut mapped_devs)?;
         for dev in mapped_devs.iter_mut() {
             dev.hndl.grab().map_err(|e| DeviceFail(e))?;
         }
@@ -240,18 +267,9 @@ fn program() -> Result<(), AccError> {
                             if ev.event_type() != EventType::KEY {
                                 continue;
                             }
-                            if dev.toggles.contains(&ev.code()) {
-                                if ev.value() == 1 {
-                                    prev_toggle_key = Some(ev.code());
-                                } else if ev.value() == 0 {
-                                    if prev_toggle_key == Some(ev.code()) {
-                                        prev_toggle_key = None;
-                                        break 'on;
-                                    }
-                                    prev_toggle_key = None;
-                                }
+                            if dev.toggles.contains(&ev.code()) && ev.value() == 1 {
+                                break 'on;
                             }
-
                             if let Some(chord) = dev.kmap.get(&ev.code()) {
                                 if ev.value() == 1 {
                                     midi_handler.play(chord);
@@ -269,6 +287,7 @@ fn program() -> Result<(), AccError> {
                 }
             }
         }
+        wait_until_keys_released(&mut mapped_devs)?;
         for dev in mapped_devs.iter_mut() {
             dev.hndl.ungrab().map_err(|e| DeviceFail(e))?;
         }
