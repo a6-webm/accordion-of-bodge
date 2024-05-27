@@ -1,0 +1,2 @@
+replace nix with the other library that rose knows abt
+use clap instead of manually doing it
