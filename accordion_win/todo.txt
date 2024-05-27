@@ -1,5 +1,0 @@
-GUI?
-
-notification area icon?
-
-ffi with RtMidi for personal virtual midi port
